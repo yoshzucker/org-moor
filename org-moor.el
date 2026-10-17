@@ -45,6 +45,10 @@
 
 ;;; Code:
 
+;; Every command's autoload names this file, not the one defining it, so
+;; that whichever command comes first loads all of the package -- and
+;; `with-eval-after-load' on `org-moor' always runs.
+
 (require 'org-moor-core)
 (require 'org-moor-take)
 (require 'org-moor-return)

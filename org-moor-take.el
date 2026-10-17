@@ -147,7 +147,7 @@ the end of the file, when TARGET is before the first heading, a file, or
         (substring-no-properties text)
       (user-error "org-moor: the clipboard is empty"))))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-quote "org-moor" nil t)
 (defun org-moor-quote (title &optional pick)
   "Quote the clipboard under TITLE, at point or, with PICK, a chosen heading.
 TITLE says who it is from and about what: \"Chat from Robin\"."
@@ -216,7 +216,7 @@ For a taking that failed halfway, so that it leaves nothing behind."
   "Title offered for the next file taken, when the caller knows a better
 one than its name -- a document's own title, sent from outside Emacs.")
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-take-file "org-moor" nil t)
 (defun org-moor-take-file (file &optional pick via flip origin)
   "Take FILE as a source: a heading for it and its copy in the store.
 At point when in Org; with PICK, or from outside Org, under a chosen
@@ -339,7 +339,7 @@ By curl when there is one, following redirects; else by `url-copy-file'."
   (let ((text (ignore-errors (string-trim (org-moor--clipboard)))))
     (and text (string-match-p "\\`https?://[^ \t\n]+\\'" text) text)))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-take-url "org-moor" nil t)
 (defun org-moor-take-url (url &optional title pick)
   "Take URL as a source, titled TITLE, and keep a copy of it.
 A URL that is a file -- see `org-moor-url-file-name' -- is downloaded as
@@ -372,7 +372,7 @@ clipboard is offered."
 
 ;;;; org-protocol
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-protocol "org-moor" nil nil)
 (defun org-moor-protocol (info)
   "org-protocol handler.  INFO is a plist from the protocol URL.
 
@@ -396,7 +396,7 @@ and Emacs is brought to the front to ask."
      (t (message "org-moor: protocol URL had no url= or path="))))
   nil)
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-protocol-setup "org-moor" nil nil)
 (defun org-moor-protocol-setup ()
   "Register the `moor' org-protocol."
   (require 'org-protocol)

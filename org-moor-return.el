@@ -105,7 +105,7 @@ Each is a plist: :marker :path :time, the latest taking, and :count."
                               (plist-get anchor :count))
                       'face 'shadow)))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-jump "org-moor" nil t)
 (defun org-moor-jump ()
   "Go to a heading something was taken to, newest first."
   (interactive)

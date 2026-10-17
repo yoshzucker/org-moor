@@ -165,7 +165,7 @@ The heading's copy turned into text, else its quotes, else nothing."
       (org-moor-fathom-quotes-text)
       ""))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-fathom "org-moor" nil t)
 (defun org-moor-fathom (&optional beg end)
   "Draft what the heading at point means, starting from its source's words.
 With an active region, from the region BEG..END.  On a file in Dired, take

@@ -126,7 +126,7 @@ it when the lines have moved."
                       "\n#+end_quote\n")
             "")))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-insert-note "org-moor" nil t)
 (defun org-moor-insert-note ()
   "Add the place shown here, and what is selected, to the source's draft.
 The place is the page, or in a text the words at point.  The buffer is a
@@ -183,7 +183,7 @@ org-noter session, `org-noter-insert-note' instead."
         (cdr (assoc (completing-read "Source: " table nil t) table)))
     (car markers)))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-open-source "org-moor" nil t)
 (defun org-moor-open-source (&optional origin)
   "Open the copy of the source at point, or of one under it.
 With ORIGIN (\\[universal-argument]), open where it came from instead."
@@ -299,7 +299,7 @@ Text written at the end of a narrowed indirect buffer falls outside it."
 
 (add-hook 'org-moor-fathom-written-hook #'org-moor--heading-refresh)
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-noter "org-moor" nil t)
 (defun org-moor-noter ()
   "Read the source at point, or one under it, beside its heading.
 A PDF, or a copy read as text, opens on the left in

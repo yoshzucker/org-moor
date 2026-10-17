@@ -93,7 +93,7 @@ is taken under the first root."
   (and (derived-mode-p 'dired-mode)
        (dired-get-marked-files nil nil nil nil t)))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-put-away "org-moor" nil t)
 (defun org-moor-put-away (files dir &optional take)
   "Move FILES into DIR.  With TAKE, take each from there, as a copy.
 Interactively FILES are the marked files in Dired or the one at point, and
@@ -122,7 +122,7 @@ Return the files' new paths."
           (org-moor-take-file file target nil nil))))
     moved))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-put-away-and-take "org-moor" nil t)
 (defun org-moor-put-away-and-take (files dir)
   "Move FILES into DIR, and take each from there, as a copy."
   (interactive
@@ -148,7 +148,7 @@ Return the files' new paths."
   (setq dired-directory (cons (car dired-directory) (org-moor-sweep--files)))
   (apply #'dired-revert args))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-sweep "org-moor" nil t)
 (defun org-moor-sweep ()
   "Show what has piled up in `org-moor-move-directories', newest first."
   (interactive)

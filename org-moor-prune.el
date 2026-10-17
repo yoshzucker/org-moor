@@ -156,7 +156,7 @@ The heading, its notes and its origin are kept."
           (org-moor-let-go (plist-get c :marker)))
         (tabulated-list-revert)))))
 
-;;;###autoload
+;;;###autoload (autoload 'org-moor-prune "org-moor" nil t)
 (defun org-moor-prune ()
   "List the copies in the store, largest first, to choose which to let go."
   (interactive)
