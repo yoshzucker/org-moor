@@ -87,9 +87,17 @@ when TARGET is before the first heading."
 
 (defun org-moor--clipboard ()
   "Return the text on the clipboard, or signal if there is none."
-  (let ((text (or (ignore-errors (gui-get-selection 'CLIPBOARD 'UTF8_STRING))
-                  (ignore-errors (current-kill 0 t)))))
-    (if (and text (not (string-blank-p text)))
+  ;; Each way is tried until one gives text.  An empty string is not an
+  ;; answer: macOS gives one for UTF8_STRING, a type it does not serve,
+  ;; while the default type holds the text.
+  (let ((text (seq-some
+               (lambda (get)
+                 (let ((s (ignore-errors (funcall get))))
+                   (and (stringp s) (not (string-blank-p s)) s)))
+               (list (lambda () (gui-get-selection 'CLIPBOARD 'UTF8_STRING))
+                     (lambda () (gui-get-selection 'CLIPBOARD))
+                     (lambda () (current-kill 0 t))))))
+    (if text
         (substring-no-properties text)
       (user-error "org-moor: the clipboard is empty"))))
 
