@@ -32,20 +32,56 @@ Nil means `org-default-notes-file'."
   "Return the buffer of the inbox file."
   (find-file-noselect (or org-moor-inbox-file org-default-notes-file)))
 
+(defvar org-moor-heading-history nil
+  "Headings picked for taking, newest first.")
+
+(defun org-moor--targets ()
+  "Return the refile targets, read from the inbox when not in Org.
+Each is (NAME FILE REGEXP POS); POS is nil for a file as a whole."
+  (with-current-buffer (if (derived-mode-p 'org-mode)
+                           (current-buffer)
+                         (org-moor--inbox-buffer))
+    (org-refile-get-targets)))
+
+(defun org-moor--target-at (entry)
+  "Return the target for refile ENTRY: a marker, or its file for the top."
+  (if (nth 3 entry)
+      (with-current-buffer (find-file-noselect (nth 1 entry))
+        (copy-marker (nth 3 entry)))
+    (nth 1 entry)))
+
+(defun org-moor-read-heading (&optional prompt)
+  "Read a heading to take to, existing or new, and return the target.
+A name from the refile targets is that heading.  PARENT/NAME, where
+PARENT is one, is a new heading NAME under it.  Any other name is a new
+heading at the top of the inbox.  Nothing is the inbox itself.
+
+The target is a marker at a heading, a file (its top level), or `inbox'."
+  (let* ((table (org-moor--targets))
+         (answer (string-trim
+                  (completing-read
+                   (or prompt "Take to (new name creates): ")
+                   table nil nil nil 'org-moor-heading-history))))
+    (cond
+     ((string-empty-p answer) 'inbox)
+     ((assoc answer table) (org-moor--target-at (assoc answer table)))
+     ((and (string-match "\\`\\(.*\\)/\\([^/]+\\)\\'" answer)
+           (assoc (match-string 1 answer) table))
+      (org-moor-insert-source-heading
+       (org-moor--target-at (assoc (match-string 1 answer) table))
+       (match-string 2 answer)))
+     (t (org-moor-insert-source-heading 'inbox answer)))))
+
 (defun org-moor--target (pick)
-  "Return where a taken thing goes: a marker, or the symbol `inbox'.
-At point when in Org and PICK is nil.  Otherwise at the start of a heading
-picked from the refile targets, or, when none is picked, `inbox': a heading
-of its own at the top level of the inbox file.  The end of a file is not a
-place of its own, since it is inside the last heading there."
-  (if (and (not pick) (derived-mode-p 'org-mode))
-      (point-marker)
-    (let ((loc (ignore-errors
-                 (org-refile-get-location "Take to" nil t))))
-      (if (and loc (nth 3 loc))
-          (with-current-buffer (find-file-noselect (nth 1 loc))
-            (copy-marker (nth 3 loc)))
-        'inbox))))
+  "Return where a taken thing goes: a marker, a file, or `inbox'.
+PICK may itself be a target, which is used as it is.  Otherwise at point
+when in Org and PICK is nil, or read, see `org-moor-read-heading'.
+The end of a file is not a place of its own, since it is inside the
+last heading there; `inbox' is the inbox file's top level."
+  (cond ((markerp pick) (copy-marker pick))
+        ((or (stringp pick) (eq pick 'inbox)) pick)
+        ((and (not pick) (derived-mode-p 'org-mode)) (point-marker))
+        (t (org-moor-read-heading))))
 
 (defun org-moor--release (target)
   "Let go of TARGET when it is a marker."
@@ -64,11 +100,12 @@ place of its own, since it is inside the last heading there."
 
 (defun org-moor-insert-source-heading (target title)
   "Insert a heading titled TITLE for a source at TARGET; return its marker.
-Under the heading TARGET is in, as its last child; at the top level, at
-the end of the file, when TARGET is before the first heading or `inbox'."
-  (with-current-buffer (if (markerp target)
-                           (marker-buffer target)
-                         (org-moor--inbox-buffer))
+Under the heading TARGET is in, as its last child.  At the top level, at
+the end of the file, when TARGET is before the first heading, a file, or
+`inbox'."
+  (with-current-buffer (cond ((markerp target) (marker-buffer target))
+                             ((stringp target) (find-file-noselect target))
+                             (t (org-moor--inbox-buffer)))
     (org-with-wide-buffer
      (let ((level (if (not (markerp target))
                       0

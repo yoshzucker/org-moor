@@ -115,6 +115,25 @@ and copies one from anywhere else, where it is in somebody's place for
 it.  ~C-u C-u~ turns that round for one file.  In Dired it takes the file
 at point.
 
+** Picking a heading, or a directory
+
+Wherever a heading is asked for, an existing one can be picked or a new
+one made in the same prompt: a name from the refile targets is that
+heading, ~PARENT/NAME~ makes NAME under PARENT, any other name makes a
+top-level heading in the inbox, and nothing is the inbox.  A directory is
+asked for the same way, under ~org-moor-directory-roots~; a path that does
+not exist yet is made once you agree.
+
+** Sweeping
+
+~org-moor-sweep~ shows what lies in ~org-moor-move-directories~ as one
+Dired buffer, newest first, so each file is decided while it is still
+known.  Everything Dired does works there.  ~org-moor-put-away~ moves the
+file at point, or the marked ones, into a directory of yours;
+~org-moor-put-away-and-take~ also takes each from there as a copy.  A
+directory is renamed as work goes on, so what Org points to is the copy in
+the store, never the directory.
+
 ** Drafts
 
 ~org-moor-fathom~ opens a draft for the heading at point, as

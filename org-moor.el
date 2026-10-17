@@ -34,6 +34,8 @@
 ;; `org-moor-take-file' take a file: a heading for it, its copy in the store
 ;; `org-moor-take-url'  take a web page: its URL, and a copy if monolith is there
 ;; `org-moor-fathom'    draft what a heading's source means, and write it in
+;; `org-moor-sweep'     what piled up in downloads and the like, newest first
+;; `org-moor-put-away'  move a file into a directory of yours, and take it too
 ;;
 ;; See README.org.
 
@@ -43,6 +45,7 @@
 (require 'org-moor-take)
 (require 'org-moor-return)
 (require 'org-moor-fathom)
+(require 'org-moor-sweep)
 
 (provide 'org-moor)
 ;;; org-moor.el ends here
