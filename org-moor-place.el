@@ -33,7 +33,7 @@
 
 (require 'org-moor-core)
 (require 'org-moor-take)
-(require 'org-moor-fathom)
+(require 'org-moor-draft)
 (require 'cl-lib)
 
 (declare-function pdf-view-active-region-text "pdf-view")
@@ -131,7 +131,7 @@ it when the lines have moved."
   "Add the place shown here, and what is selected, to the source's draft.
 The place is the page, or in a text the words at point.  The buffer is a
 copy in the store, or a file you are then asked to take.  The draft is
-the one `org-moor-fathom' opens for the source's heading.  In an
+the one `org-moor-draft' opens for the source's heading.  In an
 org-noter session, `org-noter-insert-note' instead."
   (interactive)
   (if (bound-and-true-p org-noter--session)
@@ -157,22 +157,10 @@ org-noter session, `org-noter-insert-note' instead."
                      (user-error "org-moor: not taken"))
                    (org-moor-take-file file t)))
          (id (or id (org-with-point-at marker (org-id-get)))))
-    (org-moor-fathom--open marker (org-moor-place-string id page selection line)
+    (org-moor-draft--open marker (org-moor-place-string id page selection line)
                            windows t)))
 
 ;;;; From the note
-
-(defun org-moor--sources-at ()
-  "Return the sources at and under the heading at point, as markers."
-  (org-with-wide-buffer
-   (org-back-to-heading t)
-   (let ((end (save-excursion (org-end-of-subtree t t) (point)))
-         found)
-     (while (< (point) end)
-       (when (and (org-at-heading-p) (org-moor-source-p))
-         (push (point-marker) found))
-       (outline-next-heading))
-     (nreverse found))))
 
 (defun org-moor--choose-source (markers)
   "Return one of MARKERS, asking when there is more than one."
@@ -297,7 +285,7 @@ Text written at the end of a narrowed indirect buffer falls outside it."
           (dolist (window (get-buffer-window-list buffer nil t))
             (set-window-point window (point-max))))))))
 
-(add-hook 'org-moor-fathom-written-hook #'org-moor--heading-refresh)
+(add-hook 'org-moor-draft-written-hook #'org-moor--heading-refresh)
 
 ;;;###autoload (autoload 'org-moor-noter "org-moor" nil t)
 (defun org-moor-noter ()

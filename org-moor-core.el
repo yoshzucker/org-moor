@@ -97,6 +97,18 @@ FILE is the copy's name in the store, if there is one.  Return the id."
                    (format-time-string (org-time-stamp-format t t)))
     id))
 
+(defun org-moor--sources-at ()
+  "Return the sources at and under the heading at point, as markers."
+  (org-with-wide-buffer
+   (org-back-to-heading t)
+   (let ((end (save-excursion (org-end-of-subtree t t) (point)))
+         found)
+     (while (< (point) end)
+       (when (and (org-at-heading-p) (org-moor-source-p))
+         (push (point-marker) found))
+       (outline-next-heading))
+     (nreverse found))))
+
 ;;;; Places
 
 (defun org-moor-link-parse (path)

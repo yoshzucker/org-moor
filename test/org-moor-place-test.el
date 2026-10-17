@@ -15,7 +15,7 @@
 `copy' is the copy's path and `id' the source's id."
   (declare (indent 0))
   `(org-moor-test--with-notes "* Topic\n"
-     (let* ((org-moor-fathom-directory (expand-file-name "drafts/" dir))
+     (let* ((org-moor-draft-directory (expand-file-name "drafts/" dir))
             (orig (expand-file-name "rules.txt" dir))
             (org-moor-move-directories nil)
             (org-moor-files-function (lambda () (list buffer-file-name)))
@@ -50,15 +50,15 @@
     (goto-char (point-min))
     (set-mark (point)) (end-of-line) (activate-mark)
     (org-moor-insert-note)
-    (should org-moor-fathom-mode)
+    (should org-moor-draft-mode)
     (set-buffer (find-file-noselect copy))
     (deactivate-mark)
     (org-moor-insert-note)
-    (should org-moor-fathom-mode)
+    (should org-moor-draft-mode)
     (should (equal (buffer-string)
                    (format "[[moor:%s::rule][l. 1]]\n#+begin_quote\nrule one\n#+end_quote\n\n[[moor:%s::rule][l. 1]]\n"
                            id id)))
-    (org-moor-fathom-finish)
+    (org-moor-draft-finish)
     (with-current-buffer notes
       (should (string-match-p (regexp-quote "#+begin_quote\nrule one") (buffer-string))))))
 
@@ -93,7 +93,7 @@
     (forward-line 1)
     (org-moor-insert-note)
     (insert "\nSecond rule.")
-    (org-moor-fathom-finish)
+    (org-moor-draft-finish)
     (with-current-buffer (window-buffer (next-window))
       (should (string-match-p "Second rule\\." (buffer-string))))
     (should (equal buffer-file-name copy))

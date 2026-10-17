@@ -33,7 +33,7 @@
 ;; `org-moor-jump'    go back to any heading something was taken to
 ;; `org-moor-take-file' take a file: a heading for it, its copy in the store
 ;; `org-moor-take-url'  take a web page: its URL, and a copy if monolith is there
-;; `org-moor-fathom'    draft what a heading's source means, and write it in
+;; `org-moor-draft'     draft what a heading means, and write it in
 ;; `org-moor-sweep'     what piled up in downloads and the like, newest first
 ;; `org-moor-put-away'  move a file into a directory of yours, and take it too
 ;; `org-moor-noter'      read a source beside its heading; `i' notes
@@ -52,7 +52,7 @@
 (require 'org-moor-core)
 (require 'org-moor-take)
 (require 'org-moor-return)
-(require 'org-moor-fathom)
+(require 'org-moor-draft)
 (require 'org-moor-sweep)
 (require 'org-moor-place)
 (require 'org-moor-prune)

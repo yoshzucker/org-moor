@@ -21,13 +21,13 @@ seconds, whenever you are asked, however long it has been.
 
 So this package does five things, and none of them is to organise:
 
-| Step        | What it does                                                                     |
-|-------------+----------------------------------------------------------------------------------|
-| Take        | bring a thing in when you meet it, which is usually outside Emacs                |
-| Fathom      | write what it means, in a capture-like buffer, starting from a draft of its text |
-| Tie         | join what you wrote to the source, and to the place inside it                    |
-| Return      | get back to the heading, to the copy, to the place, to the origin                |
-| Re-tie      | move a source to another heading, gather, or let a copy go                       |
+| Step   | What it does                                                         |
+|--------+----------------------------------------------------------------------|
+| Take   | bring a thing in when you meet it, which is usually outside Emacs    |
+| Draft  | write what it means, in a capture-like buffer, beside the source     |
+| Tie    | join what you wrote to the source, and to the place inside it        |
+| Return | get back to the heading, to the copy, to the place, to the origin    |
+| Re-tie | move a source to another heading, gather, or let a copy go           |
 
 What the package fixes is the structure that holds these together:
 properties, blocks, and where copies are kept.  What you write and how you
@@ -41,7 +41,7 @@ arrange it under a heading is yours; there are no prescribed sections.
                       :files ("*.el" ("script" "script/*")))
   :defer t
   :commands (org-moor-quote org-moor-take-file org-moor-take-url
-             org-moor-fathom org-moor-noter org-moor-jump org-moor-sweep)
+             org-moor-draft org-moor-noter org-moor-jump org-moor-sweep)
   :init
   (with-eval-after-load 'org-protocol
     (org-moor-protocol-setup)))
@@ -52,8 +52,7 @@ Programs it calls when they are there, and does without when not:
 | Program     | For                                                   |
 |-------------+-------------------------------------------------------|
 | ~monolith~  | keeping a web page as one HTML file                   |
-| ~pandoc~    | turning HTML, Word, PowerPoint, EPUB into draft text  |
-| ~pdftotext~ | turning a PDF into draft text (poppler)               |
+| ~pandoc~    | making HTML, Word, PowerPoint, EPUB readable as text  |
 
 For a browser, ~script/org-moor-bookmarklet.txt~ is a bookmarklet that
 sends the page through ~org-protocol://moor~.  org-protocol has to be
@@ -76,7 +75,7 @@ The settings most worth giving:
   when taken, and listed by ~org-moor-sweep~.
 - ~org-moor-directory-roots~: where ~org-moor-put-away~ offers to put files.
 - ~org-moor-open-function~: your own policy for opening files.
-- ~org-moor-fathom-assist-function~: an assistant to rewrite a draft.
+- ~org-moor-draft-assist-function~: an assistant to help with a draft.
 
 * Commands
 
@@ -85,7 +84,7 @@ The settings most worth giving:
 | ~org-moor-quote~             | quote the clipboard, titled                              |
 | ~org-moor-take-file~         | take a file (in Dired, the one at point)                 |
 | ~org-moor-take-url~          | take a web page                                          |
-| ~org-moor-fathom~            | draft what a source means, and write it in               |
+| ~org-moor-draft~             | draft what a heading means, and write it in              |
 | ~org-moor-noter~             | read a source beside its heading; ~i~ notes              |
 | ~org-moor-insert-note~       | from a copy being read, add its place to the draft       |
 | ~org-moor-jump~              | back to any heading something was taken to               |
@@ -201,19 +200,24 @@ the store, never the directory.
 
 ** Drafts
 
-~org-moor-fathom~ opens a draft for the heading at point, as
-~org-capture~ does (in Dired, after taking the file at point), starting
-from the source's words: the region, else
-the copy turned into text (~pdftotext~ for a PDF, pandoc for the rest),
-else the heading's quotes.  That text is not kept; it is there to be
-rewritten.  In a PDF each page begins with a ~moor:~ link to it, so a
-sentence that keeps its link keeps its place.
+~org-moor-draft~ opens a draft for the heading at point, as ~org-capture~
+does (in Dired, after taking the file at point), starting from the
+region, else the heading's quotes, else nothing.  The sources are not
+copied in: they are read beside it with ~org-moor-noter~, and their places
+added from there.
 
 ~C-c C-c~ writes the draft at the end of the heading's own text; headings
-in it become the heading's children.  ~C-c C-k~ throws it away.  The draft
-is a file in ~org-moor-fathom-directory~, so a tool outside Emacs can
-rewrite it; ~C-c C-a~ calls ~org-moor-fathom-assist-function~ with its
-path, and the buffer follows the file.
+in it become the heading's children.  ~C-c C-k~ throws it away.
+
+~C-c C-a~ asks ~org-moor-draft-assist-function~ to do something with the
+draft -- what, it asks first; nothing is its usual help.  It is given the
+draft, the heading's text, and the heading's sources, those under it
+too, as files to read: text, Markdown and PDF as they are, the others
+made readable once by ~org-moor-draft-converters~ (pandoc, to Markdown
+beside the copy).  What it gives back is set into the draft as
+conflicts, one for each place it differs, kept or refused one by one with
+~smerge-mode~: nothing changes but what you take.  An answer to a
+question arrives the same way, to be read and refused.
 
 ** Notes from where you read
 
