@@ -1,0 +1,99 @@
+#!/bin/bash
+# org-moor-front.macos -- take the document in front into Emacs, once.
+#
+# Run from a global hotkey while the document is in front: a file open in
+# Preview, Keynote, PowerPoint and the like, a file selected in Finder, or
+# a page in a browser.  It asks the app what it has open, hands that to
+# Emacs through org-protocol, and exits; nothing stays running.
+#
+#   org-moor-front.macos
+#
+# EMACSCLIENT names the emacsclient to use, when it is not on PATH -- a
+# hotkey tool usually starts commands with a short PATH.
+#
+# The first time it asks an app, macOS asks you to allow the program that
+# ran it (the hotkey tool) to control that app.
+
+set -eu
+
+client="${EMACSCLIENT:-}"
+if [ -z "$client" ]; then
+  for c in "$(command -v emacsclient || true)" \
+           /opt/homebrew/bin/emacsclient /usr/local/bin/emacsclient \
+           /Applications/Emacs.app/Contents/MacOS/bin/emacsclient; do
+    if [ -n "$c" ] && [ -x "$c" ]; then client="$c"; break; fi
+  done
+fi
+if [ -z "$client" ]; then
+  echo "org-moor-front: emacsclient not found; set EMACSCLIENT" >&2
+  exit 1
+fi
+
+front_url() {
+  osascript -l JavaScript <<'JXA'
+function run() {
+  function posix(u) {
+    if (!u) return "";
+    return decodeURI(String(u)).replace(/^file:\/\/localhost/, "").replace(/^file:\/\//, "");
+  }
+  // System Events names an app in the language of the system, and the
+  // scripting bridge wants the English name.  Unlisted names pass through.
+  function canon(name) {
+    var map = {"プレビュー": "Preview", "テキストエディット": "TextEdit",
+               "ファインダ": "Finder"};
+    return map[name] || name;
+  }
+  function docPath(app) {
+    try {
+      var docs = Application(app).documents;
+      if (!docs.length) return "";
+      try { return docs[0].path(); } catch (e1) { return posix(docs[0].url()); }
+    } catch (e) { return ""; }
+  }
+  var se = Application("System Events");
+  var procs = se.applicationProcesses.whose({frontmost: true});
+  if (!procs.length) return "";
+  var app = canon(procs[0].name());
+  var path = "", page = "", title = "";
+  try { title = procs[0].windows[0].name(); } catch (e) {}
+
+  try {
+    if (["Preview", "TextEdit", "Keynote", "Pages", "Numbers"].indexOf(app) >= 0) {
+      path = docPath(app);
+    } else if (app === "Microsoft PowerPoint") {
+      path = Application(app).activePresentation.fullName();
+    } else if (app === "Microsoft Word") {
+      path = Application(app).activeDocument.fullName();
+    } else if (app === "Microsoft Excel") {
+      path = Application(app).activeWorkbook.fullName();
+    } else if (app === "Safari") {
+      var st = Application(app).windows[0].currentTab;
+      page = st.url(); title = st.name();
+    } else if (["Google Chrome", "Microsoft Edge", "Arc", "Brave Browser"].indexOf(app) >= 0) {
+      var ct = Application(app).windows[0].activeTab;
+      page = ct.url(); title = ct.title();
+    } else if (app === "Finder") {
+      var sel = Application("Finder").selection();
+      if (sel.length) path = posix(sel[0].url());
+    }
+  } catch (e) {}
+
+  // A document opened from the web reports a URL as its file.
+  if (path && /^https?:\/\//.test(path)) { page = path; path = ""; }
+  if (path && /\/$/.test(path)) path = "";
+  if (!path && !page) return "";
+
+  var q = path ? "path=" + encodeURIComponent(path) : "url=" + encodeURIComponent(page);
+  if (title) q += "&title=" + encodeURIComponent(title);
+  return "org-protocol://moor?" + q;
+}
+JXA
+}
+
+url=$(front_url)
+
+if [ -z "$url" ]; then
+  osascript -e 'display notification "Nothing in front to take" with title "org-moor"' || true
+  exit 0
+fi
+exec "$client" -n "$url"

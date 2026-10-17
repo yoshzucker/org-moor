@@ -60,6 +60,16 @@ sends the page through ~org-protocol://moor~.  org-protocol has to be
 loaded when it arrives; see its own documentation for registering the
 protocol with your system.
 
+What you want to take is usually in front of you outside Emacs.
+~script/org-moor-front.macos~ and ~script/org-moor-front.ps1~ take the
+document in front -- a file open in an app, a file selected in the file
+manager, a page in a browser -- once, from a global hotkey, and exit.
+Each asks the app what it has open and sends it through org-protocol.
+On Windows, a PowerPoint or Excel document opened from the web is saved as
+a copy by the app itself, which is taken with its URL as the origin; a
+Word document from the web, which cannot be copied that way, is taken as
+its URL.
+
 The settings most worth giving:
 
 - ~org-moor-move-directories~: where things pile up; files there are moved
