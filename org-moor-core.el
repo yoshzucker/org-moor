@@ -106,9 +106,24 @@ FILE is the copy's name in the store, if there is one.  Return the id."
                  (string-to-number (match-string 2 path))))
     (error "org-moor: not a moor link: %s" path)))
 
-(defvar org-moor-open-page-function nil
-  "Function called with a file and a page number to show that page, or nil.
-Unset, the file is opened with `org-open-file' and the page is not sought.")
+(defcustom org-moor-open-function nil
+  "Function called with a path to open a copy, or nil for `org-open-file'.
+Give it your own policy for which files the OS opens and which Emacs reads,
+so that it is decided once.  A place with a page in a PDF is opened in
+Emacs regardless, since only there can the page be sought."
+  :type '(choice (const :tag "org-open-file" nil) function)
+  :group 'org-moor)
+
+(defun org-moor-open-copy (file &optional page)
+  "Open FILE, at PAGE when there is one and Emacs can show it."
+  (if (and page (string-match-p "\\.pdf\\'" file))
+      (progn
+        (find-file file)
+        (cond ((and (derived-mode-p 'pdf-view-mode) (fboundp 'pdf-view-goto-page))
+               (pdf-view-goto-page page))
+              ((and (derived-mode-p 'doc-view-mode) (fboundp 'doc-view-goto-page))
+               (doc-view-goto-page page))))
+    (funcall (or org-moor-open-function #'org-open-file) file)))
 
 (defun org-moor-link-follow (path _arg)
   "Open the place PATH: the copy at its page, or else the origin."
@@ -119,9 +134,7 @@ Unset, the file is opened with `org-open-file' and the page is not sought.")
     (set-marker marker nil)
     (cond
      ((plist-get source :copy)
-      (if (and page org-moor-open-page-function)
-          (funcall org-moor-open-page-function (plist-get source :copy) page)
-        (org-open-file (plist-get source :copy))))
+      (org-moor-open-copy (plist-get source :copy) page))
      ((plist-get source :origin)
       (org-link-open-from-string (plist-get source :origin)))
      (t (user-error "org-moor: %s has neither copy nor origin" id)))))

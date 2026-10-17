@@ -209,6 +209,7 @@ At point when in Org; with PICK, under a chosen heading."
 
 ;;;; org-protocol
 
+;;;###autoload
 (defun org-moor-protocol (info)
   "org-protocol handler.  INFO is a plist from the protocol URL.
 
@@ -221,6 +222,7 @@ always picked."
     (message "org-moor: protocol URL had no url="))
   nil)
 
+;;;###autoload
 (defun org-moor-protocol-setup ()
   "Register the `moor' org-protocol."
   (require 'org-protocol)
