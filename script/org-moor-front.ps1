@@ -13,8 +13,11 @@
   The app itself can: it is asked to save a copy, which is what is taken,
   with the URL kept as where it came from.
 
-  org-protocol has to be registered with Windows (the "org-protocol" URL
-  scheme pointing at emacsclientw -n "%1").
+  The URL is handed to emacsclientw directly: $env:EMACSCLIENT, else the
+  one on PATH.  A Scoop shim on PATH is followed to the program it stands
+  for, since a shim is a console program and would show a window.  Only
+  when there is no emacsclientw is the org-protocol URL opened through
+  Windows, which then needs the scheme registered.
 
 .PARAMETER Hwnd
   Window to read.  Without it, the foreground window.
@@ -117,4 +120,27 @@ if (-not $path -and -not $url) { exit 0 }
 $q = if ($path) { 'path=' + [uri]::EscapeDataString($path) } else { 'url=' + [uri]::EscapeDataString($url) }
 if ($origin) { $q += '&origin=' + [uri]::EscapeDataString($origin) }
 if ($title) { $q += '&title=' + [uri]::EscapeDataString($title) }
-Start-Process ('org-protocol://moor?' + $q)
+$protocolUrl = 'org-protocol://moor?' + $q
+
+function Resolve-EmacsClient {
+  if ($env:EMACSCLIENT -and (Test-Path -LiteralPath $env:EMACSCLIENT)) { return $env:EMACSCLIENT }
+  $cmd = Get-Command emacsclientw.exe -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if (-not $cmd) { return '' }
+  $exe = $cmd.Source
+  $shim = [IO.Path]::ChangeExtension($exe, '.shim')
+  if (Test-Path -LiteralPath $shim) {
+    $line = Get-Content -LiteralPath $shim | Where-Object { $_ -match '^\s*path\s*=' } | Select-Object -First 1
+    if ($line -match '=\s*"?([^"]+?)"?\s*$' -and (Test-Path -LiteralPath $Matches[1])) {
+      return $Matches[1]
+    }
+  }
+  return $exe
+}
+
+$client = Resolve-EmacsClient
+if ($client) {
+  Start-Process -FilePath $client -ArgumentList @('-n', ('"' + $protocolUrl + '"')) -WindowStyle Hidden
+} else {
+  Start-Process $protocolUrl
+}
