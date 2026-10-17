@@ -19,6 +19,8 @@
 
 (require 'org-moor-core)
 (require 'org-refile)
+(require 'url-parse)
+(require 'url-util)
 
 (defvar org-protocol-protocol-alist)
 
@@ -210,13 +212,19 @@ For a taking that failed halfway, so that it leaves nothing behind."
     (when (and (file-directory-p dir) (directory-empty-p dir))
       (delete-directory dir))))
 
+(defvar org-moor--default-title nil
+  "Title offered for the next file taken, when the caller knows a better
+one than its name -- a document's own title, sent from outside Emacs.")
+
 ;;;###autoload
-(defun org-moor-take-file (file &optional pick via flip)
+(defun org-moor-take-file (file &optional pick via flip origin)
   "Take FILE as a source: a heading for it and its copy in the store.
 At point when in Org; with PICK, or from outside Org, under a chosen
 heading.  VIA says how it arrived, `file' when nil.  The original is moved
 when it is in `org-moor-move-directories' and copied otherwise; FLIP turns
-that round for this once.  Return the marker of the new heading.
+that round for this once.  ORIGIN is where it came from, when that is
+not FILE itself -- a copy saved from a document opened from the web.
+Return the marker of the new heading.
 
 Interactively FILE is the one at point in Dired, else read.  One
 \\[universal-argument] picks the heading and asks VIA; two also flip."
@@ -234,11 +242,12 @@ Interactively FILE is the one at point in Dired, else read.  One
          (name (file-name-nondirectory file))
          (move (if flip (not (org-moor-move-p file)) (org-moor-move-p file)))
          (title (read-string (format "Title (%s): " (if move "move" "copy"))
-                             (file-name-sans-extension name)))
+                             (or org-moor--default-title
+                                 (file-name-sans-extension name))))
          (target (org-moor--target pick))
          (marker (org-moor-insert-source-heading target title))
          (id (org-with-point-at marker
-               (org-moor-set-source file (or via 'file) name)))
+               (org-moor-set-source (or origin file) (or via 'file) name)))
          (copy (org-moor-copy-path id name)))
     (org-moor--release target)
     (condition-case err
@@ -287,24 +296,77 @@ callback taking non-nil on success.  Nil keeps only the URL."
 (defconst org-moor-snapshot-file "page.html"
   "Name of a web page's copy in its store directory.")
 
+(defcustom org-moor-download-extensions
+  '("pdf" "pptx" "ppt" "docx" "doc" "xlsx" "xls" "csv" "epub" "zip" "txt" "md")
+  "Extensions of URLs that are files rather than pages.
+Such a URL is downloaded as it is, not saved as a page: a PDF opened in a
+browser is still a PDF."
+  :type '(repeat string)
+  :group 'org-moor)
+
+(defcustom org-moor-curl-program "curl"
+  "The curl executable, used to download a file from a URL."
+  :type 'string
+  :group 'org-moor)
+
+(defun org-moor-url-file-name (url)
+  "Return the file name URL downloads as, or nil if URL is a page.
+A file is a URL whose path ends in one of `org-moor-download-extensions'."
+  (let* ((path (car (url-path-and-query (url-generic-parse-url url))))
+         (name (and path (file-name-nondirectory
+                          (decode-coding-string (url-unhex-string path) 'utf-8)))))
+    (and name
+         (member (downcase (or (file-name-extension name) ""))
+                 org-moor-download-extensions)
+         name)))
+
+(defun org-moor-download (url file done)
+  "Download URL to FILE, then call DONE with success.
+By curl when there is one, following redirects; else by `url-copy-file'."
+  (if (executable-find org-moor-curl-program)
+      (make-process
+       :name "org-moor-download"
+       :buffer " *org-moor-download*"
+       :command (list org-moor-curl-program "-fsSL" "-o" file url)
+       :sentinel (lambda (proc _event)
+                   (unless (process-live-p proc)
+                     (funcall done (and (zerop (process-exit-status proc))
+                                        (file-exists-p file))))))
+    (funcall done (ignore-errors (url-copy-file url file t) t))))
+
+(defun org-moor--clipboard-url ()
+  "Return the clipboard's text when it is a URL, or nil."
+  (let ((text (ignore-errors (string-trim (org-moor--clipboard)))))
+    (and text (string-match-p "\\`https?://[^ \t\n]+\\'" text) text)))
+
 ;;;###autoload
 (defun org-moor-take-url (url &optional title pick)
-  "Take URL as a source, titled TITLE, and keep a copy of the page.
-At point when in Org; with PICK, under a chosen heading."
-  (interactive (list (read-string "URL: ") nil current-prefix-arg))
-  (let* ((title (read-string "Title: " title))
+  "Take URL as a source, titled TITLE, and keep a copy of it.
+A URL that is a file -- see `org-moor-url-file-name' -- is downloaded as
+that file; a page is kept by `org-moor-snapshot-function'.  At point when
+in Org; with PICK, under a chosen heading.  Interactively the URL on the
+clipboard is offered."
+  (interactive
+   (list (read-string "URL: " (org-moor--clipboard-url)) nil current-prefix-arg))
+  (let* ((name (org-moor-url-file-name url))
+         (title (read-string "Title: " (or title
+                                           (and name (file-name-sans-extension name)))))
          (target (org-moor--target pick))
          (marker (org-moor-insert-source-heading target title))
-         (id (org-with-point-at marker (org-moor-set-source url 'web))))
+         (id (org-with-point-at marker (org-moor-set-source url 'web)))
+         (file (or name org-moor-snapshot-file))
+         (keep (if name #'org-moor-download org-moor-snapshot-function)))
     (org-moor--release target)
-    (when org-moor-snapshot-function
-      (let ((copy (org-moor-copy-path id org-moor-snapshot-file)))
+    (when keep
+      (let ((copy (org-moor-copy-path id file)))
         (make-directory (file-name-directory copy) t)
-        (funcall org-moor-snapshot-function url copy
+        (funcall keep url copy
                  (lambda (ok)
-                   (when (and ok (buffer-live-p (marker-buffer marker)))
-                     (org-entry-put marker org-moor-property-file
-                                    org-moor-snapshot-file)
+                   (if (not ok)
+                       (message "org-moor: kept only the URL of %s" title)
+                     (when (buffer-live-p (marker-buffer marker))
+                       (org-entry-put marker org-moor-property-file file)
+                       (org-moor--write-noter marker copy))
                      (message "Kept %s" title))))))
     marker))
 
@@ -315,12 +377,23 @@ At point when in Org; with PICK, under a chosen heading."
   "org-protocol handler.  INFO is a plist from the protocol URL.
 
   org-protocol://moor?url=URL&title=TITLE
+  org-protocol://moor?path=PATH&title=TITLE&origin=ORIGIN&via=VIA
 
-A page reached from a browser has no point to go to, so a heading is
-always picked."
-  (if-let* ((url (plist-get info :url)))
-      (org-moor-take-url url (plist-get info :title) t)
-    (message "org-moor: protocol URL had no url="))
+The first takes a page or a file on the web, the second a file on disk;
+ORIGIN, when given, is where that file was opened from.  Either arrives
+from outside Emacs, with no point to go to, so a heading is always picked,
+and Emacs is brought to the front to ask."
+  (select-frame-set-input-focus (selected-frame))
+  (let ((url (plist-get info :url))
+        (path (plist-get info :path))
+        (title (plist-get info :title)))
+    (cond
+     (path
+      (let ((org-moor--default-title title))
+        (org-moor-take-file path t (plist-get info :via) nil
+                            (plist-get info :origin))))
+     (url (org-moor-take-url url title t))
+     (t (message "org-moor: protocol URL had no url= or path="))))
   nil)
 
 ;;;###autoload

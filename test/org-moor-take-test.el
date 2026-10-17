@@ -123,5 +123,37 @@
         (should-error (org-moor-take-file orig)))
       (should (equal (buffer-string) "* Topic\n")))))
 
+(ert-deftest org-moor-test-url-file-name ()
+  (should (equal (org-moor-url-file-name "https://x.com/a/Manual%20v3.pdf?dl=1")
+                 "Manual v3.pdf"))
+  (should (equal (org-moor-url-file-name "https://x.com/%E8%B3%87%E6%96%99.pptx")
+                 "資料.pptx"))
+  (should-not (org-moor-url-file-name "https://x.com/article"))
+  (should-not (org-moor-url-file-name "https://x.com/")))
+
+(ert-deftest org-moor-test-take-url-downloads-a-file ()
+  (org-moor-test--with-notes "* Topic\n"
+    (let (fetched)
+      (cl-letf (((symbol-function 'read-string) (lambda (_p &optional d &rest _) d))
+                ((symbol-function 'org-moor-download)
+                 (lambda (url file done) (setq fetched url)
+                   (with-temp-file file) (funcall done t))))
+        (let ((m (org-moor-take-url "https://x.com/rules.pdf")))
+          (should (equal fetched "https://x.com/rules.pdf"))
+          (org-with-point-at m
+            (should (equal (org-get-heading t t t t) "rules"))
+            (should (equal (org-entry-get nil "MOOR_FILE") "rules.pdf"))
+            (should (org-entry-get nil "NOTER_DOCUMENT"))))))))
+
+(ert-deftest org-moor-test-protocol-path-keeps-origin ()
+  (let (args)
+    (cl-letf (((symbol-function 'org-moor-take-file)
+               (lambda (&rest a) (setq args (cons org-moor--default-title a))))
+              ((symbol-function 'select-frame-set-input-focus) #'ignore))
+      (org-moor-protocol '(:path "/tmp/deck.pptx" :title "Plan"
+                           :origin "https://s.example.com/deck.pptx" :via "chat"))
+      (should (equal args '("Plan" "/tmp/deck.pptx" t "chat" nil
+                            "https://s.example.com/deck.pptx"))))))
+
 (provide 'org-moor-take-test)
 ;;; org-moor-take-test.el ends here
