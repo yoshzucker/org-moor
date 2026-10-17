@@ -33,6 +33,7 @@
 ;; `org-moor-jump'    go back to any heading something was taken to
 ;; `org-moor-take-file' take a file: a heading for it, its copy in the store
 ;; `org-moor-take-url'  take a web page: its URL, and a copy if monolith is there
+;; `org-moor-fathom'    draft what a heading's source means, and write it in
 ;;
 ;; See README.org.
 
@@ -41,6 +42,7 @@
 (require 'org-moor-core)
 (require 'org-moor-take)
 (require 'org-moor-return)
+(require 'org-moor-fathom)
 
 (provide 'org-moor)
 ;;; org-moor.el ends here

@@ -107,6 +107,21 @@ A place is written as a ~moor:~ link: ~moor:ID::PAGE~.  Following it opens
 the copy at the page; without a copy, the origin.  A ~moor:ID~ link with no
 page is the source itself.
 
+** Drafts
+
+~org-moor-fathom~ opens a draft for the heading at point, as
+~org-capture~ does, starting from the source's words: the region, else
+the copy turned into text (~pdftotext~ for a PDF, pandoc for the rest),
+else the heading's quotes.  That text is not kept; it is there to be
+rewritten.  In a PDF each page begins with a ~moor:~ link to it, so a
+sentence that keeps its link keeps its place.
+
+~C-c C-c~ writes the draft at the end of the heading's own text; headings
+in it become the heading's children.  ~C-c C-k~ throws it away.  The draft
+is a file in ~org-moor-fathom-directory~, so a tool outside Emacs can
+rewrite it; ~C-c C-a~ calls ~org-moor-fathom-assist-function~ with its
+path, and the buffer follows the file.
+
 ** The store
 
 ~org-moor-store-directory~ holds the copies.  Keep it next to your Org
