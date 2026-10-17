@@ -53,7 +53,7 @@
 (ert-deftest org-moor-test-take-file ()
   (org-moor-test--with-notes "* Topic\n** Other\n"
     (let ((orig (expand-file-name "manual.pdf" (file-name-directory buffer-file-name)))
-          (org-moor-file-action 'copy))
+          (org-moor-move-directories nil))
       (with-temp-file orig (insert "pdf"))
       (cl-letf (((symbol-function 'read-string) (lambda (_p &optional d &rest _) d)))
         (let ((m (org-moor-take-file orig)))
@@ -77,6 +77,27 @@
           (org-with-point-at m
             (should (equal (org-entry-get nil "MOOR_ORIGIN") "https://example.com/"))
             (should (equal (org-entry-get nil "MOOR_FILE") "page.html"))))))))
+
+(ert-deftest org-moor-test-move-or-copy ()
+  (org-moor-test--with-notes "* Topic\n"
+    (let* ((root (file-name-directory buffer-file-name))
+           (downloads (file-name-as-directory (expand-file-name "dl" root)))
+           (piled (expand-file-name "a.txt" downloads))
+           (kept (expand-file-name "b.txt" root))
+           (org-moor-move-directories (list downloads)))
+      (make-directory downloads)
+      (with-temp-file piled (insert "a"))
+      (with-temp-file kept (insert "b"))
+      (should (org-moor-move-p piled))
+      (should-not (org-moor-move-p kept))
+      (cl-letf (((symbol-function 'read-string) (lambda (_p &optional d &rest _) d)))
+        (org-moor-take-file piled)
+        (org-moor-take-file kept)
+        (should-not (file-exists-p piled))
+        (should (file-exists-p kept))
+        (with-temp-file piled (insert "a"))
+        (org-moor-take-file piled nil nil t)
+        (should (file-exists-p piled))))))
 
 (provide 'org-moor-take-test)
 ;;; org-moor-take-test.el ends here

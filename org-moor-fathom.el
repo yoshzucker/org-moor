@@ -168,15 +168,24 @@ text, else its quotes, else nothing."
 ;;;###autoload
 (defun org-moor-fathom (&optional beg end)
   "Draft what the heading at point means, starting from its source's words.
-With an active region, from the region BEG..END."
+With an active region, from the region BEG..END.  On a file in Dired, take
+the file first, with `org-moor-take-file', and draft for its new heading."
   (interactive (and (use-region-p) (list (region-beginning) (region-end))))
-  (let* ((target (org-moor-fathom--heading))
-         (text (save-excursion
-                 (goto-char target)
-                 (org-moor-fathom-draft-text beg end)))
+  (let ((windows (current-window-configuration)))
+    (if-let* ((file (org-moor--file-at-point)))
+        (let ((marker (org-moor-take-file file t)))
+          (org-moor-fathom--open marker nil nil windows))
+      (org-moor-fathom--open (org-moor-fathom--heading) beg end windows))))
+
+(defun org-moor-fathom--open (target beg end windows)
+  "Open the draft for the heading at TARGET, from BEG..END if given.
+WINDOWS is put back when the draft is done."
+  (let* ((text (with-current-buffer (marker-buffer target)
+                 (save-excursion
+                   (goto-char target)
+                   (org-moor-fathom-draft-text beg end))))
          (id (org-with-point-at target (org-id-get-create)))
-         (file (expand-file-name (concat id ".org") org-moor-fathom-directory))
-         (windows (current-window-configuration)))
+         (file (expand-file-name (concat id ".org") org-moor-fathom-directory)))
     (make-directory org-moor-fathom-directory t)
     (when (and (file-exists-p file)
                (not (y-or-n-p "A draft for this heading exists; start again? ")))

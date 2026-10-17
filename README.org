@@ -107,10 +107,19 @@ A place is written as a ~moor:~ link: ~moor:ID::PAGE~.  Following it opens
 the copy at the page; without a copy, the origin.  A ~moor:ID~ link with no
 page is the source itself.
 
+** Taking a file
+
+~org-moor-take-file~ moves a file that is in one of
+~org-moor-move-directories~ -- where things pile up, such as downloads --
+and copies one from anywhere else, where it is in somebody's place for
+it.  ~C-u C-u~ turns that round for one file.  In Dired it takes the file
+at point.
+
 ** Drafts
 
 ~org-moor-fathom~ opens a draft for the heading at point, as
-~org-capture~ does, starting from the source's words: the region, else
+~org-capture~ does (in Dired, after taking the file at point), starting
+from the source's words: the region, else
 the copy turned into text (~pdftotext~ for a PDF, pandoc for the rest),
 else the heading's quotes.  That text is not kept; it is there to be
 rewritten.  In a PDF each page begins with a ~moor:~ link to it, so a

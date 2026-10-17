@@ -120,10 +120,26 @@ TITLE says who it is from and about what: \"Chat from Robin\"."
 
 ;;;; Files
 
-(defcustom org-moor-file-action 'copy
-  "What taking a file does with the original: `copy' it or `move' it."
-  :type '(choice (const copy) (const move))
+(defcustom org-moor-move-directories nil
+  "Directories whose files are moved when taken; files elsewhere are copied.
+These are the places things pile up -- downloads, a desktop -- where taking
+a file is tidying it away.  Anywhere else the file is somebody's place for
+it, and taking it leaves it where it was."
+  :type '(repeat directory)
   :group 'org-moor)
+
+(defun org-moor-move-p (file)
+  "Non-nil when taking FILE moves it, by `org-moor-move-directories'."
+  (let ((file (file-truename file)))
+    (seq-some (lambda (dir)
+                (file-in-directory-p file (file-truename dir)))
+              org-moor-move-directories)))
+
+(defun org-moor--file-at-point ()
+  "Return the file at point in Dired, or nil."
+  (and (derived-mode-p 'dired-mode)
+       (fboundp 'dired-get-filename)
+       (dired-get-filename nil t)))
 
 (defcustom org-moor-noter-extensions '("pdf" "epub" "djvu")
   "Extensions of copies org-noter can open; NOTER_DOCUMENT is written for these."
@@ -137,18 +153,28 @@ TITLE says who it is from and about what: \"Chat from Robin\"."
     (org-entry-put marker "NOTER_DOCUMENT" (abbreviate-file-name copy))))
 
 ;;;###autoload
-(defun org-moor-take-file (file &optional pick via)
+(defun org-moor-take-file (file &optional pick via flip)
   "Take FILE as a source: a heading for it and its copy in the store.
-At point when in Org; with PICK, under a chosen heading.  VIA says how it
-arrived, `file' when nil.  The original is copied or moved as
-`org-moor-file-action' says.  Return the marker of the new heading."
-  (interactive (list (read-file-name "Take file: " nil nil t)
-                     current-prefix-arg
-                     (and current-prefix-arg
-                          (completing-read "Via: " '("file" "mail" "chat" "web")))))
+At point when in Org; with PICK, or from outside Org, under a chosen
+heading.  VIA says how it arrived, `file' when nil.  The original is moved
+when it is in `org-moor-move-directories' and copied otherwise; FLIP turns
+that round for this once.  Return the marker of the new heading.
+
+Interactively FILE is the one at point in Dired, else read.  One
+\\[universal-argument] picks the heading and asks VIA; two also flip."
+  (interactive
+   (let ((arg (prefix-numeric-value current-prefix-arg)))
+     (list (or (org-moor--file-at-point)
+               (read-file-name "Take file: " nil nil t))
+           (>= arg 4)
+           (and (>= arg 4)
+                (completing-read "Via: " '("file" "mail" "chat" "web")))
+           (>= arg 16))))
   (let* ((file (expand-file-name file))
          (name (file-name-nondirectory file))
-         (title (read-string "Title: " (file-name-sans-extension name)))
+         (move (if flip (not (org-moor-move-p file)) (org-moor-move-p file)))
+         (title (read-string (format "Title (%s): " (if move "move" "copy"))
+                             (file-name-sans-extension name)))
          (target (org-moor--target pick))
          (marker (org-moor-insert-source-heading target title))
          (id (org-with-point-at marker
@@ -156,11 +182,13 @@ arrived, `file' when nil.  The original is copied or moved as
          (copy (org-moor-copy-path id name)))
     (set-marker target nil)
     (make-directory (file-name-directory copy) t)
-    (if (eq org-moor-file-action 'move)
-        (rename-file file copy)
-      (copy-file file copy nil t))
+    (if (not move)
+        (copy-file file copy nil t)
+      (rename-file file copy)
+      (when (fboundp 'dired-remove-file)
+        (dired-remove-file file)))
     (org-moor--write-noter marker copy)
-    (message "Took %s" name)
+    (message "Took %s (%s)" name (if move "moved" "copied"))
     marker))
 
 ;;;; Web pages
