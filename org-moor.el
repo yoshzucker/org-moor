@@ -31,6 +31,8 @@
 ;;
 ;; `org-moor-quote'   quote the clipboard, titled, at point or a chosen heading
 ;; `org-moor-jump'    go back to any heading something was taken to
+;; `org-moor-take-file' take a file: a heading for it, its copy in the store
+;; `org-moor-take-url'  take a web page: its URL, and a copy if monolith is there
 ;;
 ;; See README.org.
 

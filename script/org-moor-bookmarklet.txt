@@ -1,0 +1,1 @@
+javascript:location.href='org-protocol://moor?url='+encodeURIComponent(location.href)+'&title='+encodeURIComponent(document.title)
