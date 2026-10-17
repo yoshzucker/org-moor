@@ -99,5 +99,29 @@
         (org-moor-take-file piled nil nil t)
         (should (file-exists-p piled))))))
 
+(ert-deftest org-moor-test-inbox-is-top-level ()
+  (org-moor-test--with-notes "* Old\n** Older\n"
+    (let ((org-moor-inbox-file buffer-file-name))
+      (org-moor-insert-source-heading 'inbox "First")
+      (org-moor-insert-source-heading 'inbox "Second")
+      (cl-letf (((symbol-function 'org-moor--clipboard) (lambda () "words"))
+                ((symbol-function 'org-moor--target) (lambda (_) 'inbox)))
+        (org-moor-quote "Chat" t))
+      (should (equal (org-map-entries (lambda () (org-get-heading t t t t)))
+                     '("Old" "Older" "First" "Second" "Chat")))
+      (should (equal (org-map-entries #'org-current-level) '(1 2 1 1 1)))
+      (should (string-match-p "^\\* Chat\n#\\+begin_quote Chat .*\nwords\n" (buffer-string))))))
+
+(ert-deftest org-moor-test-take-file-refuses-and-undoes ()
+  (org-moor-test--with-notes "* Topic\n"
+    (should-error (org-moor-take-file (file-name-directory buffer-file-name))
+                  :type 'user-error)
+    (let ((orig (expand-file-name "x.txt" (file-name-directory buffer-file-name))))
+      (with-temp-file orig (insert "x"))
+      (cl-letf (((symbol-function 'read-string) (lambda (_p &optional d &rest _) d))
+                ((symbol-function 'copy-file) (lambda (&rest _) (error "Disk full"))))
+        (should-error (org-moor-take-file orig)))
+      (should (equal (buffer-string) "* Topic\n")))))
+
 (provide 'org-moor-take-test)
 ;;; org-moor-take-test.el ends here

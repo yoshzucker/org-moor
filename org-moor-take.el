@@ -28,17 +28,16 @@ Nil means `org-default-notes-file'."
   :type '(choice (const :tag "org-default-notes-file" nil) file)
   :group 'org-moor)
 
-(defun org-moor--inbox ()
-  "Return a marker at the end of the inbox file."
-  (let ((file (or org-moor-inbox-file org-default-notes-file)))
-    (with-current-buffer (find-file-noselect file)
-      (copy-marker (point-max)))))
+(defun org-moor--inbox-buffer ()
+  "Return the buffer of the inbox file."
+  (find-file-noselect (or org-moor-inbox-file org-default-notes-file)))
 
 (defun org-moor--target (pick)
-  "Return a marker where a taken thing goes.
+  "Return where a taken thing goes: a marker, or the symbol `inbox'.
 At point when in Org and PICK is nil.  Otherwise at the start of a heading
-picked from the refile targets, or, when none is picked, at the end of the
-inbox."
+picked from the refile targets, or, when none is picked, `inbox': a heading
+of its own at the top level of the inbox file.  The end of a file is not a
+place of its own, since it is inside the last heading there."
   (if (and (not pick) (derived-mode-p 'org-mode))
       (point-marker)
     (let ((loc (ignore-errors
@@ -46,7 +45,11 @@ inbox."
       (if (and loc (nth 3 loc))
           (with-current-buffer (find-file-noselect (nth 1 loc))
             (copy-marker (nth 3 loc)))
-        (org-moor--inbox)))))
+        'inbox))))
+
+(defun org-moor--release (target)
+  "Let go of TARGET when it is a marker."
+  (when (markerp target) (set-marker target nil)))
 
 (defun org-moor--at-heading-p ()
   "Non-nil when point is at the start of a heading."
@@ -61,15 +64,19 @@ inbox."
 
 (defun org-moor-insert-source-heading (target title)
   "Insert a heading titled TITLE for a source at TARGET; return its marker.
-Under the heading TARGET is in, as its last child; at the end of the file
-when TARGET is before the first heading."
-  (with-current-buffer (marker-buffer target)
+Under the heading TARGET is in, as its last child; at the top level, at
+the end of the file, when TARGET is before the first heading or `inbox'."
+  (with-current-buffer (if (markerp target)
+                           (marker-buffer target)
+                         (org-moor--inbox-buffer))
     (org-with-wide-buffer
-     (goto-char target)
-     (let ((level (if (org-before-first-heading-p)
+     (let ((level (if (not (markerp target))
                       0
-                    (org-back-to-heading t)
-                    (org-current-level))))
+                    (goto-char target)
+                    (if (org-before-first-heading-p)
+                        0
+                      (org-back-to-heading t)
+                      (org-current-level)))))
        (if (zerop level)
            (goto-char (point-max))
          (org-end-of-subtree t t))
@@ -106,8 +113,11 @@ when TARGET is before the first heading."
   "Quote the clipboard under TITLE, at point or, with PICK, a chosen heading.
 TITLE says who it is from and about what: \"Chat from Robin\"."
   (interactive (list (read-string "Title: ") current-prefix-arg))
-  (let ((text (org-moor--clipboard))
-        (target (org-moor--target pick)))
+  (let* ((text (org-moor--clipboard))
+         (target (org-moor--target pick))
+         (target (if (markerp target)
+                     target
+                   (org-moor-insert-source-heading target title))))
     (with-current-buffer (marker-buffer target)
       (org-with-wide-buffer
        (goto-char target)
@@ -152,6 +162,17 @@ it, and taking it leaves it where it was."
                 org-moor-noter-extensions)
     (org-entry-put marker "NOTER_DOCUMENT" (abbreviate-file-name copy))))
 
+(defun org-moor--undo-source (marker id)
+  "Remove the source heading at MARKER and the store directory of ID.
+For a taking that failed halfway, so that it leaves nothing behind."
+  (with-current-buffer (marker-buffer marker)
+    (org-with-wide-buffer
+     (goto-char marker)
+     (delete-region (point) (save-excursion (org-end-of-subtree t t) (point)))))
+  (let ((dir (org-moor-store-path id)))
+    (when (and (file-directory-p dir) (directory-empty-p dir))
+      (delete-directory dir))))
+
 ;;;###autoload
 (defun org-moor-take-file (file &optional pick via flip)
   "Take FILE as a source: a heading for it and its copy in the store.
@@ -170,6 +191,8 @@ Interactively FILE is the one at point in Dired, else read.  One
            (and (>= arg 4)
                 (completing-read "Via: " '("file" "mail" "chat" "web")))
            (>= arg 16))))
+  (unless (file-regular-p file)
+    (user-error "org-moor: not a regular file: %s" file))
   (let* ((file (expand-file-name file))
          (name (file-name-nondirectory file))
          (move (if flip (not (org-moor-move-p file)) (org-moor-move-p file)))
@@ -180,13 +203,18 @@ Interactively FILE is the one at point in Dired, else read.  One
          (id (org-with-point-at marker
                (org-moor-set-source file (or via 'file) name)))
          (copy (org-moor-copy-path id name)))
-    (set-marker target nil)
-    (make-directory (file-name-directory copy) t)
-    (if (not move)
-        (copy-file file copy nil t)
-      (rename-file file copy)
-      (when (fboundp 'dired-remove-file)
-        (dired-remove-file file)))
+    (org-moor--release target)
+    (condition-case err
+        (progn
+          (make-directory (file-name-directory copy) t)
+          (if move
+              (rename-file file copy)
+            (copy-file file copy nil t)))
+      (error
+       (org-moor--undo-source marker id)
+       (signal (car err) (cdr err))))
+    (when (and move (fboundp 'dired-remove-file))
+      (dired-remove-file file))
     (org-moor--write-noter marker copy)
     (message "Took %s (%s)" name (if move "moved" "copied"))
     marker))
@@ -231,7 +259,7 @@ At point when in Org; with PICK, under a chosen heading."
          (target (org-moor--target pick))
          (marker (org-moor-insert-source-heading target title))
          (id (org-with-point-at marker (org-moor-set-source url 'web))))
-    (set-marker target nil)
+    (org-moor--release target)
     (when org-moor-snapshot-function
       (let ((copy (org-moor-copy-path id org-moor-snapshot-file)))
         (make-directory (file-name-directory copy) t)
