@@ -125,6 +125,14 @@ Emacs regardless, since only there can the page be sought."
                (doc-view-goto-page page))))
     (funcall (or org-moor-open-function #'org-open-file) file)))
 
+(defun org-moor-open-origin (origin)
+  "Open ORIGIN: a URL in the browser, a path where it still is."
+  (cond ((string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]+:[^\\]" origin)
+         (browse-url origin))
+        ((file-exists-p origin)
+         (funcall (or org-moor-open-function #'org-open-file) origin))
+        (t (user-error "org-moor: the origin is gone: %s" origin))))
+
 (defun org-moor-link-follow (path _arg)
   "Open the place PATH: the copy at its page, or else the origin."
   (pcase-let* ((`(,id . ,page) (org-moor-link-parse path))
@@ -136,7 +144,7 @@ Emacs regardless, since only there can the page be sought."
      ((plist-get source :copy)
       (org-moor-open-copy (plist-get source :copy) page))
      ((plist-get source :origin)
-      (org-link-open-from-string (plist-get source :origin)))
+      (org-moor-open-origin (plist-get source :origin)))
      (t (user-error "org-moor: %s has neither copy nor origin" id)))))
 
 (org-link-set-parameters "moor" :follow #'org-moor-link-follow)

@@ -150,6 +150,24 @@ is a file in ~org-moor-fathom-directory~, so a tool outside Emacs can
 rewrite it; ~C-c C-a~ calls ~org-moor-fathom-assist-function~ with its
 path, and the buffer follows the file.
 
+** Notes from where you read
+
+~org-moor-note-here~, in a buffer showing a copy, adds the page you are on
+-- and the text you selected -- to the draft for the source's heading, and
+opens it.  Pages read one after another collect in one draft, which C-c
+C-c writes in as any other.  A file that is not a source yet is taken
+first.
+
+~org-moor-open-source~, on a heading, opens the copy of its source or of
+one under it; with a prefix, the origin.
+
+** Letting copies go
+
+~org-moor-prune~ lists the copies, largest first, with when each was taken
+and whether its origin is a URL.  ~d~ marks, ~u~ unmarks, ~x~ lets the
+marked ones go: the bytes are deleted, and the heading, what you wrote and
+the origin stay.
+
 ** The store
 
 ~org-moor-store-directory~ holds the copies.  Keep it next to your Org
