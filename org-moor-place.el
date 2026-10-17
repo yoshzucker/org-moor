@@ -76,7 +76,8 @@ are the id, split after its second character."
 
 (defun org-moor-current-text ()
   "Return the words at point that find it in this buffer, or nil.
-From the start of the selection, or of the line, as few words as make
+From the start of the selection, or of the line -- or, with nothing
+after it, of the last line with words -- as few words as make
 their first occurrence this one -- but no more than
 `org-moor-place-text-length' characters, which then find the first one
 alike."
@@ -84,6 +85,10 @@ alike."
     (save-excursion
       (if (use-region-p) (goto-char (region-beginning)) (back-to-indentation))
       (skip-chars-forward " \t\n")
+      ;; Nothing after point, as at the end: the last words before it.
+      (when (eobp)
+        (skip-chars-backward " \t\n")
+        (back-to-indentation))
       (let* ((start (point))
              (words (split-string
                      (buffer-substring-no-properties
@@ -94,6 +99,9 @@ alike."
           (dolist (word words)
             (let ((longer (if text (concat text " " word) word)))
               (when (> (length longer) org-moor-place-text-length)
+                ;; A first word too long, as a URL, is cut to the length.
+                (unless text
+                  (setq text (substring word 0 org-moor-place-text-length)))
                 (throw 'found nil))
               (setq text longer)
               (when (= start (save-excursion
