@@ -18,7 +18,8 @@
 (ert-deftest org-moor-test-link-parse ()
   (should (equal (org-moor-link-parse "6f1c") '("6f1c" . nil)))
   (should (equal (org-moor-link-parse "6f1c::12") '("6f1c" . 12)))
-  (should-error (org-moor-link-parse "6f1c::p12")))
+  (should (equal (org-moor-link-parse "6f1c::rule two") '("6f1c" . "rule two")))
+  (should-error (org-moor-link-parse "::12")))
 
 (ert-deftest org-moor-test-source-roundtrip ()
   (let* ((org-moor-store-directory (make-temp-file "moor" t))

@@ -118,6 +118,9 @@ name places in the original document, which the draft is not."
 
 ;;;; The draft
 
+(defvar org-moor-fathom-written-hook nil
+  "Hook run in the heading's buffer, at the heading, once a draft is written.")
+
 (defvar-local org-moor-fathom--target nil
   "Marker of the heading this draft is written for.")
 
@@ -252,7 +255,9 @@ Its headings become children of that heading."
          (goto-char target)
          (let ((text (org-moor-fathom-fit-headings text (org-current-level))))
            (org-moor--end-of-entry)
-           (insert text "\n")))))
+           (insert text "\n")))
+        (org-with-point-at target
+          (run-hooks 'org-moor-fathom-written-hook))))
     (org-moor-fathom--done)
     (message "Written into %s"
              (org-with-point-at target (org-get-heading t t t t)))))

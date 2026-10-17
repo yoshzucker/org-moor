@@ -36,7 +36,8 @@
 ;; `org-moor-fathom'    draft what a heading's source means, and write it in
 ;; `org-moor-sweep'     what piled up in downloads and the like, newest first
 ;; `org-moor-put-away'  move a file into a directory of yours, and take it too
-;; `org-moor-note-here'  from a copy being read: its page, into the source's draft
+;; `org-moor-noter'      read a source beside its heading; `i' notes
+;; `org-moor-insert-note' from a copy being read: its place, into the draft
 ;; `org-moor-open-source' the copy of the source here, or with C-u its origin
 ;; `org-moor-prune'      choose which copies to let go, largest first
 ;;

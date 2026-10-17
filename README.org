@@ -41,7 +41,7 @@ arrange it under a heading is yours; there are no prescribed sections.
                       :files ("*.el" ("script" "script/*")))
   :defer t
   :commands (org-moor-quote org-moor-take-file org-moor-take-url
-             org-moor-fathom org-moor-jump org-moor-sweep)
+             org-moor-fathom org-moor-noter org-moor-jump org-moor-sweep)
   :init
   (with-eval-after-load 'org-protocol
     (org-moor-protocol-setup)))
@@ -86,7 +86,8 @@ The settings most worth giving:
 | ~org-moor-take-file~         | take a file (in Dired, the one at point)                 |
 | ~org-moor-take-url~          | take a web page                                          |
 | ~org-moor-fathom~            | draft what a source means, and write it in               |
-| ~org-moor-note-here~         | from a copy being read, add its page to the draft        |
+| ~org-moor-noter~             | read a source beside its heading; ~i~ notes              |
+| ~org-moor-insert-note~       | from a copy being read, add its place to the draft       |
 | ~org-moor-jump~              | back to any heading something was taken to               |
 | ~org-moor-open-source~       | open a source's copy, or its origin                      |
 | ~org-moor-sweep~             | what piled up, as one Dired buffer, newest first         |
@@ -165,9 +166,11 @@ Can we keep the old form for this month?
 
 ** Places
 
-A place is written as a ~moor:~ link: ~moor:ID::PAGE~.  Following it opens
-the copy at the page; without a copy, the origin.  A ~moor:ID~ link with no
-page is the source itself.
+A place is written as a ~moor:~ link: ~moor:ID::PAGE~, or in a copy read
+as text -- see ~org-moor-text-extensions~ -- ~moor:ID::TEXT~, a few words
+found by searching for them, so that the place survives lines moving.
+Following it opens the copy at the page or the words; without a copy, the
+origin.  A ~moor:ID~ link with no place is the source itself.
 
 ** Taking a file
 
@@ -214,11 +217,20 @@ path, and the buffer follows the file.
 
 ** Notes from where you read
 
-~org-moor-note-here~, in a buffer showing a copy, adds the page you are on
--- and the text you selected -- to the draft for the source's heading, and
-opens it.  Pages read one after another collect in one draft, which C-c
-C-c writes in as any other.  A file that is not a source yet is taken
-first.
+~org-moor-noter~, on a heading, reads its source, or one under it, beside
+the heading, as org-noter does: a PDF, or a copy read as text, opens on
+the left in ~org-moor-noter-mode~, and the source's heading on the right.
+A PDF is shown by pdf-tools when it is there, else by DocView; a text is
+read-only, with its line marked.  The keys you move with are left alone
+-- Evil's among them -- ~i~ notes, and ~q~ puts the windows back.
+
+~org-moor-insert-note~, in a buffer showing a copy, adds the page you are
+on -- in a text, the words at point, as few as find them -- and the text
+you selected to the draft for the source's heading, and opens it.  In an
+org-noter session it calls ~org-noter-insert-note~ instead, so one command
+serves wherever you read.  Pages read one after another collect in one
+draft, which C-c C-c writes in as any other.  A file that is not a source
+yet is taken first.
 
 ~org-moor-open-source~, on a heading, opens the copy of its source or of
 one under it; with a prefix, the origin.

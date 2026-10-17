@@ -44,23 +44,64 @@
   (should (equal (org-moor-place-string "ID" nil " * said \n")
                  "[[moor:ID][source]]\n#+begin_quote\n,* said\n#+end_quote\n")))
 
-(ert-deftest org-moor-test-note-here-collects ()
+(ert-deftest org-moor-test-insert-note-collects ()
   (org-moor-test--with-source
     (set-buffer (find-file-noselect copy))
     (goto-char (point-min))
     (set-mark (point)) (end-of-line) (activate-mark)
-    (org-moor-note-here)
+    (org-moor-insert-note)
     (should org-moor-fathom-mode)
     (set-buffer (find-file-noselect copy))
     (deactivate-mark)
-    (org-moor-note-here)
+    (org-moor-insert-note)
     (should org-moor-fathom-mode)
     (should (equal (buffer-string)
-                   (format "[[moor:%s][source]]\n#+begin_quote\nrule one\n#+end_quote\n\n[[moor:%s][source]]\n"
+                   (format "[[moor:%s::rule][l. 1]]\n#+begin_quote\nrule one\n#+end_quote\n\n[[moor:%s::rule][l. 1]]\n"
                            id id)))
     (org-moor-fathom-finish)
     (with-current-buffer notes
       (should (string-match-p (regexp-quote "#+begin_quote\nrule one") (buffer-string))))))
+
+(ert-deftest org-moor-test-place-text ()
+  (should (equal (org-moor-place-string "ID" "a [b]" nil) "[[moor:ID::a \\[b\\]][a [b]\u200b]]\n"))
+  (org-moor-test--with-source
+    (with-current-buffer (find-file-noselect copy)
+      (text-mode)
+      (forward-line 1)
+      (should (equal (org-moor-current-text) "rule two"))
+      (goto-char (point-min))
+      (should (equal (org-moor-current-text) "rule")))
+    (org-moor-link-follow (format "%s::rule two" id) nil)
+    (should (equal buffer-file-name copy))
+    (should (looking-at "rule two"))))
+
+(ert-deftest org-moor-test-noter-text ()
+  (org-moor-test--with-source
+    ;; A heading after the source: a note written at the end of its entry
+    ;; falls just outside the narrowed heading buffer.
+    (goto-char (point-max))
+    (insert "* Next\n")
+    (goto-char (point-min))
+    (org-moor-noter)
+    (should (equal buffer-file-name copy))
+    (should org-moor-noter-mode)
+    (should buffer-read-only)
+    (should (eq (key-binding "i") #'org-moor-insert-note))
+    (should (= (length (window-list)) 2))
+    (should (string-prefix-p "*moor: "
+                             (buffer-name (window-buffer (next-window)))))
+    (forward-line 1)
+    (org-moor-insert-note)
+    (insert "\nSecond rule.")
+    (org-moor-fathom-finish)
+    (with-current-buffer (window-buffer (next-window))
+      (should (string-match-p "Second rule\\." (buffer-string))))
+    (should (equal buffer-file-name copy))
+    (org-moor-noter-quit)
+    (should (eq (current-buffer) notes))
+    (should (= (length (window-list)) 1))
+    (with-current-buffer (find-file-noselect copy)
+      (should-not buffer-read-only))))
 
 (ert-deftest org-moor-test-open-source ()
   (org-moor-test--with-source
