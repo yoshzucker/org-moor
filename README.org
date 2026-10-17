@@ -33,6 +33,58 @@ What the package fixes is the structure that holds these together:
 properties, blocks, and where copies are kept.  What you write and how you
 arrange it under a heading is yours; there are no prescribed sections.
 
+* Install
+
+#+begin_src emacs-lisp
+(use-package org-moor
+  :straight (org-moor :host github :repo "yoshzucker/org-moor"
+                      :files ("*.el" ("script" "script/*")))
+  :defer t
+  :commands (org-moor-quote org-moor-take-file org-moor-take-url
+             org-moor-fathom org-moor-jump org-moor-sweep)
+  :init
+  (with-eval-after-load 'org-protocol
+    (org-moor-protocol-setup)))
+#+end_src
+
+Programs it calls when they are there, and does without when not:
+
+| Program     | For                                                   |
+|-------------+-------------------------------------------------------|
+| ~monolith~  | keeping a web page as one HTML file                   |
+| ~pandoc~    | turning HTML, Word, PowerPoint, EPUB into draft text  |
+| ~pdftotext~ | turning a PDF into draft text (poppler)               |
+
+For a browser, ~script/org-moor-bookmarklet.txt~ is a bookmarklet that
+sends the page through ~org-protocol://moor~.  org-protocol has to be
+loaded when it arrives; see its own documentation for registering the
+protocol with your system.
+
+The settings most worth giving:
+
+- ~org-moor-move-directories~: where things pile up; files there are moved
+  when taken, and listed by ~org-moor-sweep~.
+- ~org-moor-directory-roots~: where ~org-moor-put-away~ offers to put files.
+- ~org-moor-open-function~: your own policy for opening files.
+- ~org-moor-fathom-assist-function~: an assistant to rewrite a draft.
+
+* Commands
+
+| Command                      | Does                                                     |
+|------------------------------+----------------------------------------------------------|
+| ~org-moor-quote~             | quote the clipboard, titled                              |
+| ~org-moor-take-file~         | take a file (in Dired, the one at point)                 |
+| ~org-moor-take-url~          | take a web page                                          |
+| ~org-moor-fathom~            | draft what a source means, and write it in               |
+| ~org-moor-note-here~         | from a copy being read, add its page to the draft        |
+| ~org-moor-jump~              | back to any heading something was taken to               |
+| ~org-moor-open-source~       | open a source's copy, or its origin                      |
+| ~org-moor-sweep~             | what piled up, as one Dired buffer, newest first         |
+| ~org-moor-put-away~          | move files into a directory of yours (and take them)     |
+| ~org-moor-prune~             | choose which copies to let go                            |
+
+With a prefix, the taking commands ask for the heading even in Org.
+
 * Words
 
 Five words carry the weight, and they are kept apart on purpose.
@@ -181,4 +233,5 @@ before.
 
 * Status
 
-Draft.  The structure above is the contract the code is being written to.
+New.  The structure above is the contract the code keeps to; commands may
+still change as they are used.
