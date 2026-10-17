@@ -5,7 +5,7 @@
 .DESCRIPTION
   Run from a global hotkey while the document is in front: a file open in
   PowerPoint, Word or Excel, a file selected in Explorer, or a page in Edge
-  or Chrome.  It asks the app what it has open, hands that to Emacs through
+  Chrome, Firefox or Zen.  It asks the app what it has open, hands that to Emacs through
   org-protocol, and exits; nothing stays running.
 
   A document opened from the web -- SharePoint, OneDrive -- has a URL for
@@ -106,9 +106,9 @@ switch -Regex ($exe) {
       }
     }
   }
-  '^(msedge|chrome|brave)$' {
+  '^(msedge|chrome|brave|firefox|zen)$' {
     $url = Get-BrowserUrl $handle
-    $title = $title -replace ' - (Microsoft.? Edge|Google Chrome|Brave)$', '' -replace ' - [^-]*Microsoft.? Edge$', ''
+    $title = $title -replace ' - (Microsoft.? Edge|Google Chrome|Brave)$', '' -replace ' - [^-]*Microsoft.? Edge$', '' -replace ' [-\u2014] (Mozilla Firefox|Zen( Browser)?)$', ''
   }
 }
 
