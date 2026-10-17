@@ -1,0 +1,123 @@
+#+title: org-moor
+#+options: toc:2 num:nil
+
+Bring what drifts past into your own harbour, and tie it to a heading.
+
+* Why
+
+Most of what a day hands you arrives in pieces: a chat message with no
+background, a mail whose minutes are an attachment, a link to a file on a
+shared drive, a manual of two hundred pages of which three matter.  The
+places they arrive in are poor places to keep them.  Their search does not
+find what you remember, and the names people give files and folders do not
+help it.  What you can rely on is your own environment.
+
+Bringing a thing in is not the end of it.  A file kept is only data; it
+becomes information when you have read it and written down what it means,
+in sentences you would stand behind.  And information is only worth having
+if you can get back to it -- to what you wrote, to the file it came from, to
+the place in that file, to where the file was in the first place -- in
+seconds, whenever you are asked, however long it has been.
+
+So this package does five things, and none of them is to organise:
+
+| Step        | What it does                                                                     |
+|-------------+----------------------------------------------------------------------------------|
+| Take        | bring a thing in when you meet it, which is usually outside Emacs                |
+| Fathom      | write what it means, in a capture-like buffer, starting from a draft of its text |
+| Tie         | join what you wrote to the source, and to the place inside it                    |
+| Return      | get back to the heading, to the copy, to the place, to the origin                |
+| Re-tie      | move a source to another heading, gather, or let a copy go                       |
+
+What the package fixes is the structure that holds these together:
+properties, blocks, and where copies are kept.  What you write and how you
+arrange it under a heading is yours; there are no prescribed sections.
+
+* Words
+
+Five words carry the weight, and they are kept apart on purpose.
+
+- a *heading* is always one of yours, in any of your Org files.  The
+  package writes into it; it does not decide where it lives.
+- a *source* is something you took in: a web page, a file, a message.  It
+  has an /origin/ -- where it was when you met it, a URL or a path -- which
+  is kept even after the origin changes or disappears.
+- a *copy* is a source's bytes, kept in the store.  A source may have no
+  copy (a URL you only link to) or lose it (a copy let go); its origin and
+  what you wrote about it remain.
+- the *store* is the directory copies live in, one directory per source,
+  named by the source's id.  Nothing in it is meant to be browsed or
+  arranged by hand: it is reached from Org, the way a database is reached
+  through its queries, which is what spares you from filing.
+- a *place* is a position inside a source -- a page, a slide -- that a note
+  points to.
+
+A *note* is what you write.  It is plain Org under the heading, and the
+package does not look inside it, except to find where it points.
+
+* Structure
+
+** A source is a heading
+
+Each source is a heading of its own, usually under the heading it belongs
+to, with these properties:
+
+| Property        | Holds                                                    |
+|-----------------+----------------------------------------------------------|
+| ~ID~            | the source's id; also names its directory in the store   |
+| ~MOOR_ORIGIN~   | where it was: a URL, or the path it was taken from       |
+| ~MOOR_VIA~      | how it arrived: ~web~, ~file~, ~mail~, ~chat~, ...       |
+| ~MOOR_FILE~     | the copy's file name in the store, if it has one         |
+| ~MOOR_TAKEN~    | when it was taken, an inactive timestamp                 |
+| ~NOTER_DOCUMENT~ | the copy's path, when org-noter can read it             |
+
+~NOTER_DOCUMENT~ is written so that an org-noter session opens on the
+heading as it is; notes org-noter writes there, with their ~NOTER_PAGE~, are
+places like any other.
+
+#+begin_example
+,* Expense approval, new rules
+,** Approval manual 2026
+:PROPERTIES:
+:ID:             6f1c...
+:MOOR_ORIGIN:    https://example.sharepoint.com/.../manual.pdf
+:MOOR_VIA:       chat
+:MOOR_FILE:      manual.pdf
+:MOOR_TAKEN:     [2026-10-17 Sat 10:12]
+:NOTER_DOCUMENT: ~/notes/source/6f/1c.../manual.pdf
+:END:
+Approval goes to the department head before finance. [[moor:6f1c...::12][p. 12]]
+#+end_example
+
+** Words taken as they are
+
+A message is quoted, not filed.  Its title -- who sent it, about what -- is
+written on the block's first line, where Org allows parameters, and the
+time it was taken follows:
+
+#+begin_example
+,#+begin_quote Chat from Robin [2026-10-17 Sat 10:12]
+Can we keep the old form for this month?
+,#+end_quote
+#+end_example
+
+** Places
+
+A place is written as a ~moor:~ link: ~moor:ID::PAGE~.  Following it opens
+the copy at the page; without a copy, the origin.  A ~moor:ID~ link with no
+page is the source itself.
+
+** The store
+
+~org-moor-store-directory~ holds the copies.  Keep it next to your Org
+files, so that they travel together, and out of everyday search: a store of
+PDFs and slides makes a text search slow, and is better searched on purpose,
+with a tool that reads such files.  ~org-moor-store-directory~ is that root.
+
+Images that are part of what you write -- a screenshot, a figure -- are not
+sources: they have no origin elsewhere and belong with ~org-attach~ as
+before.
+
+* Status
+
+Draft.  The structure above is the contract the code is being written to.
