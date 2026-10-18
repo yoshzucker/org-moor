@@ -1,8 +1,8 @@
-;;; org-moor-place-test.el --- Tests for places and pruning  -*- lexical-binding: t; -*-
+;;; org-moor-place-test.el --- Tests for places, reading and pruning  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
-;; emacs --batch -Q -L . -L test -l test/org-moor-place-test.el -f ert-run-tests-batch-and-exit
+;; emacs --batch -Q -L . -L ../org-dock -L test -l test/org-moor-place-test.el -f ert-run-tests-batch-and-exit
 
 ;;; Code:
 
@@ -11,119 +11,128 @@
 (require 'org-moor-take-test)
 
 (defmacro org-moor-test--with-source (&rest body)
-  "Run BODY in notes holding one source with a text copy.
-`copy' is the copy's path and `id' the source's id."
+  "Run BODY in notes whose heading Topic links to a source with a text copy.
+`copy' is the copy's path, `record' the source, `orig' the file it was
+taken from, and `notes' the notes' buffer, saved."
   (declare (indent 0))
   `(org-moor-test--with-notes "* Topic\n"
-     (let* ((org-moor-draft-directory (expand-file-name "drafts/" dir))
-            (orig (expand-file-name "rules.txt" dir))
+     (let* ((orig (expand-file-name "rules.txt" dir))
             (org-moor-move-directories nil)
             (org-moor-files-function (lambda () (list buffer-file-name)))
             (notes (current-buffer)))
        (with-temp-file orig (insert "rule one\nrule two\n"))
-       (cl-letf (((symbol-function 'read-string) (lambda (_p &optional d &rest _) d)))
-         (let* ((marker (org-moor-take-file orig))
-                (id (org-with-point-at marker (org-id-get)))
-                (copy (org-moor-copy-path id "rules.txt")))
+       (org-moor-test--titles-as-given
+         (let* ((record (org-moor-record (org-moor-test--id-at (org-moor-take-file orig))))
+                (copy (plist-get record :copy)))
            (save-buffer)
-           (org-id-add-location id buffer-file-name)
+           (goto-char (point-min))
            ,@body)))))
 
-(ert-deftest org-moor-test-copy-id ()
-  (let ((org-moor-store-directory (make-temp-file "store" t)))
-    (unwind-protect
-        (let ((f (org-moor-copy-path "6f1c-aa" "m.pdf")))
-          (make-directory (file-name-directory f) t)
-          (with-temp-file f)
-          (should (equal (org-moor-copy-id f) "6f1c-aa"))
-          (should-not (org-moor-copy-id (expand-file-name "loose.pdf" org-moor-store-directory))))
-      (delete-directory org-moor-store-directory t))))
+(ert-deftest org-moor-test-copy-record ()
+  "A copy, and what it was made readable as, are known as their source's
+by where they lie."
+  (org-moor-test--with-source
+    (should (equal (plist-get (org-moor-copy-record copy) :id) (plist-get record :id)))
+    (let ((md (concat copy ".md")))
+      (with-temp-file md)
+      (should (equal (plist-get (org-moor-copy-record md) :id) (plist-get record :id))))
+    (should-not (org-moor-copy-record orig))))
 
 (ert-deftest org-moor-test-place-string ()
-  (should (equal (org-moor-place-string "ID" 12 nil) "[[moor:ID::12][p. 12]]\n"))
-  (should (equal (org-moor-place-string "ID" nil " * said \n")
-                 "[[moor:ID][source]]\n#+begin_quote\n,* said\n#+end_quote\n")))
+  (let ((record '(:id "ID" :title "Rules")))
+    (should (equal (org-moor-place-string record 12 'page) "[[moor:ID::12][Rules p. 12]]\n"))
+    (should (equal (org-moor-place-string record 3 'line " * said \n")
+                   "[[moor:ID::3][Rules l. 3]]\n#+begin_quote\n,* said\n#+end_quote\n"))))
 
-(ert-deftest org-moor-test-insert-note-collects ()
+(ert-deftest org-moor-test-insert-place-where-opened-from ()
+  "A place noted in a copy opened from a heading goes into that heading,
+taken out to be written in, after the line its point is on."
   (org-moor-test--with-source
-    (set-buffer (find-file-noselect copy))
-    (goto-char (point-min))
-    (set-mark (point)) (end-of-line) (activate-mark)
-    (org-moor-insert-note)
-    (should org-moor-draft-mode)
-    (set-buffer (find-file-noselect copy))
-    (deactivate-mark)
-    (org-moor-insert-note)
-    (should org-moor-draft-mode)
-    (should (equal (buffer-string)
-                   (format "[[moor:%s::rule][l. 1]]\n#+begin_quote\nrule one\n#+end_quote\n\n[[moor:%s::rule][l. 1]]\n"
-                           id id)))
-    (org-moor-draft-finish)
-    (with-current-buffer notes
-      (should (string-match-p (regexp-quote "#+begin_quote\nrule one") (buffer-string))))))
-
-(ert-deftest org-moor-test-place-text ()
-  (should (equal (org-moor-place-string "ID" "a [b]" nil) "[[moor:ID::a \\[b\\]][a [b]\u200b]]\n"))
-  (org-moor-test--with-source
-    (with-current-buffer (find-file-noselect copy)
-      (text-mode)
-      (forward-line 1)
-      (should (equal (org-moor-current-text) "rule two"))
-      (goto-char (point-min))
-      (should (equal (org-moor-current-text) "rule")))
-    (org-moor-link-follow (format "%s::rule two" id) nil)
+    (org-moor-link-follow (format "%s::2" (plist-get record :id)) nil)
     (should (equal buffer-file-name copy))
-    (should (looking-at "rule two"))))
+    (set-mark (point)) (end-of-line) (activate-mark)
+    (org-moor-insert-place)
+    (let ((dock (window-buffer (next-window))))
+      (should (org-dock-origin-file dock))
+      (should (equal (with-current-buffer dock (buffer-string))
+                     (format "* Topic\n[[moor:%s][rules]]\n[[moor:%s::2][rules l. 2]]\n#+begin_quote\nrule two\n#+end_quote\n"
+                             (plist-get record :id) (plist-get record :id))))
+      (forward-line -1)
+      (org-moor-insert-place)
+      (should (string-suffix-p (format "#+end_quote\n[[moor:%s::1][rules l. 1]]\n"
+                                       (plist-get record :id))
+                               (with-current-buffer dock (buffer-string))))
+      (with-current-buffer dock (org-dock-finish)))
+    (should (string-match-p "rules l\\. 1" (with-current-buffer notes (buffer-string))))))
 
 (ert-deftest org-moor-test-noter-text ()
+  "Reading beside the heading: the copy read-only on the left, the heading
+taken out on the right, `i' noting there, `q' writing it back."
   (org-moor-test--with-source
-    ;; A heading after the source: a note written at the end of its entry
-    ;; falls just outside the narrowed heading buffer.
     (goto-char (point-max))
     (insert "* Next\n")
+    (save-buffer)
     (goto-char (point-min))
     (org-moor-noter)
     (should (equal buffer-file-name copy))
     (should org-moor-noter-mode)
     (should buffer-read-only)
-    (should (eq (key-binding "i") #'org-moor-insert-note))
+    (should (eq (key-binding "i") #'org-moor-insert-place))
     (should (= (length (window-list)) 2))
-    (should (string-prefix-p "*moor: "
-                             (buffer-name (window-buffer (next-window)))))
-    (forward-line 1)
-    (org-moor-insert-note)
-    (insert "\nSecond rule.")
-    (org-moor-draft-finish)
-    (with-current-buffer (window-buffer (next-window))
-      (should (string-match-p "Second rule\\." (buffer-string))))
-    (should (equal buffer-file-name copy))
-    (org-moor-noter-quit)
-    (should (eq (current-buffer) notes))
+    (let ((dock (window-buffer (next-window))))
+      (should (org-dock-origin-file dock))
+      (forward-line 1)
+      (org-moor-insert-place)
+      (should (string-match-p "rules l\\. 2" (with-current-buffer dock (buffer-string))))
+      (with-current-buffer dock
+        (goto-char (point-max))
+        (insert "Second rule.\n"))
+      (org-moor-noter-quit)
+      (should-not (buffer-live-p dock)))
     (should (= (length (window-list)) 1))
+    (with-current-buffer notes
+      (should (string-match-p "rules l\\. 2\\]\\]\nSecond rule\\.\n\\* Next" (buffer-string)))
+      (should-not (buffer-modified-p)))
     (with-current-buffer (find-file-noselect copy)
+      (should-not org-moor-noter-mode)
       (should-not buffer-read-only))))
 
 (ert-deftest org-moor-test-open-source ()
   (org-moor-test--with-source
     (let (opened)
-      (let ((org-moor-open-function (lambda (f) (setq opened f))))
-        (goto-char (point-min))
+      (let ((org-moor-open-function (lambda (f) (setq opened f)))
+            (org-moor-text-extensions nil))
         (org-moor-open-source)
         (should (equal opened copy))
         (org-moor-open-source t)
         (should (equal opened orig))))))
 
+(ert-deftest org-moor-test-retitle ()
+  "A source given another title has it in its record, and in the links here
+named by the old one, their places kept."
+  (org-moor-test--with-source
+    (let ((id (plist-get record :id)))
+      (goto-char (point-max))
+      (insert (format "As [[moor:%s::2][rules l. 2]] says, and [[moor:%s::1][my words]].\n" id id))
+      (search-backward "rules l. 2")
+      (org-moor-retitle (org-moor--record-at-point) "House rules")
+      (should (equal (plist-get (org-moor-record id) :title) "House rules"))
+      (should (string-match-p (regexp-quote (format "[[moor:%s][House rules]]" id)) (buffer-string)))
+      (should (string-match-p (regexp-quote (format "[[moor:%s::2][House rules l. 2]]" id)) (buffer-string)))
+      (should (string-match-p (regexp-quote "[my words]]") (buffer-string))))))
+
 (ert-deftest org-moor-test-prune ()
+  "The copies are listed from the sources, with whether anything links to
+them; letting one go keeps its record."
   (org-moor-test--with-source
     (let ((copies (org-moor-copies)))
       (should (= (length copies) 1))
       (should (= (plist-get (car copies) :size) (length "rule one\nrule two\n")))
-      (org-moor-let-go (plist-get (car copies) :marker))
+      (should (plist-get (car copies) :linked))
+      (org-moor-let-go (car copies))
       (should-not (file-exists-p copy))
       (should-not (org-moor-copies))
-      (goto-char (point-min))
-      (should (search-forward "MOOR_ORIGIN" nil t))
-      (should-not (save-excursion (goto-char (point-min)) (search-forward "MOOR_FILE" nil t))))))
+      (should (equal (plist-get (org-moor-record (plist-get record :id)) :origin) orig)))))
 
 (provide 'org-moor-place-test)
 ;;; org-moor-place-test.el ends here

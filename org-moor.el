@@ -3,8 +3,8 @@
 ;; Copyright (C) 2026 yoshzucker
 
 ;; Author: yoshzucker
-;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (org "9.6"))
+;; Version: 0.2.0
+;; Package-Requires: ((emacs "29.1") (org "9.6") (org-dock "0.1"))
 ;; Keywords: outlines
 ;; URL: https://github.com/yoshzucker/org-moor
 
@@ -29,16 +29,16 @@
 ;; to the source and the place inside it, and get back to all of it in
 ;; seconds.
 ;;
-;; `org-moor-quote'   quote the clipboard, titled, at point or a chosen heading
-;; `org-moor-jump'    go back to any heading something was taken to
-;; `org-moor-take-file' take a file: a heading for it, its copy in the store
-;; `org-moor-take-url'  take a web page: its URL, and a copy if monolith is there
-;; `org-moor-draft'     draft what a heading means, and write it in
-;; `org-moor-sweep'     what piled up in downloads and the like, newest first
-;; `org-moor-put-away'  move a file into a directory of yours, and take it too
-;; `org-moor-noter'      read a source beside its heading; `i' notes
-;; `org-moor-insert-note' from a copy being read: its place, into the draft
-;; `org-moor-open-source' the copy of the source here, or with C-u its origin
+;; `org-moor-quote'      quote the clipboard, titled, at point or a chosen heading
+;; `org-moor-jump'       go back to any heading something was taken to
+;; `org-moor-take-file'  take a file: its copy in the sources, a link to it here
+;; `org-moor-take-url'   take a web page: its URL, and a copy if monolith is there
+;; `org-moor-sweep'      what piled up in downloads and the like, newest first
+;; `org-moor-put-away'   move a file into a directory of yours, and take it too
+;; `org-moor-noter'      read a source beside its heading, taken out to note in
+;; `org-moor-insert-place' note the place being read, in its heading
+;; `org-moor-open-source' the copy of a source the heading links to, C-u its origin
+;; `org-moor-retitle'    give a source another title
 ;; `org-moor-prune'      choose which copies to let go, largest first
 ;;
 ;; See README.org.
@@ -52,7 +52,6 @@
 (require 'org-moor-core)
 (require 'org-moor-take)
 (require 'org-moor-return)
-(require 'org-moor-draft)
 (require 'org-moor-sweep)
 (require 'org-moor-place)
 (require 'org-moor-prune)

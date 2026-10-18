@@ -11,9 +11,9 @@
 
 ;; There is no state to return to -- nothing is ever put away, since anything
 ;; can be asked for again at any time.  So the way back is a list of every
-;; heading something was taken to: a source, or a heading with a titled quote
-;; in its own text.  Most recently taken first, because that is usually where
-;; you were.
+;; heading something was taken to: one with a link to a source, or a titled
+;; quote, in its own text.  Most recently taken first, because that is
+;; usually where you were.
 ;;
 ;; The list is found, not kept: the files of `org-moor-files-function' are
 ;; read each time, so there is no index to fall out of step with them.
@@ -22,6 +22,7 @@
 
 (require 'org-moor-core)
 (require 'cl-lib)
+(require 'seq)
 
 (defcustom org-moor-files-function #'org-moor-default-files
   "Function returning the Org files `org-moor-jump' looks in."
@@ -29,16 +30,25 @@
   :group 'org-moor)
 
 (defun org-moor-default-files ()
-  "Return `org-agenda-files' and the Org files under `org-directory'."
-  (delete-dups
-   (append (org-agenda-files t)
-           (and org-directory (file-directory-p org-directory)
-                (directory-files-recursively org-directory "\\.org\\'")))))
+  "Return `org-agenda-files' and the Org files under `org-directory'.
+Not those in `org-moor-sources-directory': a source's record is no note."
+  (let ((sources (file-name-as-directory (expand-file-name org-moor-sources-directory))))
+    (seq-remove
+     (lambda (file) (string-prefix-p sources (expand-file-name file)))
+     (delete-dups
+      (append (org-agenda-files t)
+              (and org-directory (file-directory-p org-directory)
+                   (directory-files-recursively
+                    org-directory "\\.org\\'" nil
+                    (lambda (dir)
+                      (not (string-prefix-p
+                            sources (file-name-as-directory (expand-file-name dir))))))))))))
 
 (defconst org-moor--taken-re
-  (concat "^[ \t]*\\(?:#\\+begin_quote[ \t]+\\(.+\\)"
-          "\\|:" org-moor-property-taken ":[ \t]*\\(.+\\)\\)$")
-  "A titled quote's first line, or a source's taken time.")
+  (concat "^[ \t]*#\\+begin_quote[ \t]+\\(.+\\)$"
+          "\\|\\[\\[moor:\\([^]:\n]+\\)")
+  "A titled quote's first line, its title in group 1; or a link to a
+source, its id in group 2.")
 
 (defun org-moor--time-in (string)
   "Return the first timestamp in STRING as a time, or nil."
@@ -47,31 +57,43 @@
 
 (defun org-moor-anchors-in-buffer ()
   "Return the headings in this buffer something was taken to.
-Each is a plist: :marker :path :time, the latest taking, and :count."
-  (let ((table (make-hash-table)))
+Each is a plist: :marker :path :time, the latest taking, and :count, the
+sources linked and the quotes, a source counted once however often its
+places are."
+  (let ((table (make-hash-table))
+        (times (make-hash-table :test #'equal)))
     (org-with-wide-buffer
      (goto-char (point-min))
      (while (re-search-forward org-moor--taken-re nil t)
        (let ((title (match-string 1))
-             (taken (match-string 2)))
+             (id (match-string 2)))
          (unless (save-excursion (org-before-first-heading-p))
            (save-excursion
              (org-back-to-heading t)
              (let* ((pos (point))
-                    (time (org-moor--time-in (or taken title)))
-                    (old (gethash pos table)))
-               (puthash pos
-			(list :marker (or (plist-get old :marker) (point-marker))
-                              :path (or (plist-get old :path)
-					(org-format-outline-path
-					 (org-get-outline-path t) 1000))
-                              :time (if (and old (plist-get old :time)
-                                             (or (null time)
-						 (time-less-p time (plist-get old :time))))
-					(plist-get old :time)
-                                      time)
-                              :count (1+ (or (plist-get old :count) 0)))
-			table)))))))
+                    (old (gethash pos table))
+                    (ids (plist-get old :ids)))
+               (unless (and id (member id ids))
+                 (let ((time (if id
+                                 (let ((known (gethash id times 'unknown)))
+                                   (if (eq known 'unknown)
+                                       (puthash id (org-moor--time-in
+                                                    (plist-get (org-moor-find-record id) :taken))
+                                                times)
+                                     known))
+                               (org-moor--time-in title))))
+                   (puthash pos
+                            (list :marker (or (plist-get old :marker) (point-marker))
+                                  :path (or (plist-get old :path)
+                                            (org-format-outline-path
+                                             (org-get-outline-path t) 1000))
+                                  :time (let ((was (plist-get old :time)))
+                                          (if (and was (or (null time) (time-less-p time was)))
+                                              was
+                                            time))
+                                  :count (1+ (or (plist-get old :count) 0))
+                                  :ids (if id (cons id ids) ids))
+                            table)))))))))
     (org-moor--anchors table)))
 
 (defun org-moor--anchors (table)

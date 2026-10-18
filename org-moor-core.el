@@ -1,4 +1,4 @@
-;;; org-moor-core.el --- Sources, copies and the store  -*- lexical-binding: t; -*-
+;;; org-moor-core.el --- Sources, their records and their places  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 yoshzucker
 
@@ -9,17 +9,23 @@
 
 ;;; Commentary:
 
-;; The dependency root.  Everything else requires this file and this file
-;; requires nothing of ours.
+;; The dependency root.  Everything else requires this file, and this file
+;; requires nothing of ours but org-dock, whose copies it reads as their
+;; headings would be read.
 ;;
-;; A *source* is a heading carrying an ID and a MOOR_ORIGIN.  Its *copy*, if
-;; any, lives in the *store*, in a directory named by that ID, the way
-;; `org-attach' names its own -- so that nothing in the store ever asks to be
-;; filed.  A *place* is a page, or a text, inside a source, written as a
-;; `moor:' link.
+;; A *source* is a directory in a *sources directory*, named by the
+;; source's id the way `org-attach' names its own: the id's first two
+;; characters, and the rest below them.  In it are the source's *copy*, if
+;; it has one, and its *record*, `moor.org', saying what it is: a title, and
+;; where it came from, how and when.  Nothing in a sources directory asks to
+;; be filed, and nothing in an Org file has to be a source's: what you write
+;; points to a source with a `moor:' link, from wherever you write it, as
+;; often as you like.
 ;;
-;; In code a source is reached by its ID, and ID is what the argument is
-;; called.
+;; A *place* is a page of a source, or a line, written as `moor:ID::N'.
+;;
+;; In code a source is reached by its id, and ID is what the argument is
+;; called; RECORD is a source as a plist, read from its record.
 
 ;;; Code:
 
@@ -27,93 +33,182 @@
 (require 'org-id)
 (require 'ol)
 (require 'subr-x)
+(require 'cl-lib)
+(require 'org-dock)
 
 (defgroup org-moor nil
   "Bring what drifts past into your own files, and tie it to a heading."
   :group 'org
   :prefix "org-moor-")
 
-(defcustom org-moor-store-directory
-  (expand-file-name "source/" org-directory)
-  "Directory the copies of sources are kept in, one directory per source."
+(define-obsolete-variable-alias 'org-moor-store-directory
+  'org-moor-sources-directory "0.2")
+
+(defcustom org-moor-sources-directory
+  (expand-file-name "sources/" org-directory)
+  "Directory the sources are kept in, one directory each.
+For every Org file that `org-moor-sources-directory-functions' says
+nothing about.  Keep it beside the Org files, so that they travel
+together, and out of everyday search: a directory of PDFs and slides
+makes a text search slow, and is better searched on purpose."
   :type 'directory
   :group 'org-moor)
 
-(defconst org-moor-property-origin "MOOR_ORIGIN"
-  "Where a source was when it was taken: a URL or a path.")
-(defconst org-moor-property-via "MOOR_VIA"
-  "How a source arrived, as a word: web, file, mail, chat.")
-(defconst org-moor-property-file "MOOR_FILE"
-  "The file name of a source's copy inside its store directory.")
-(defconst org-moor-property-taken "MOOR_TAKEN"
-  "When a source was taken, as an inactive timestamp.")
+(defvar org-moor-sources-directory-functions nil
+  "Functions saying where the sources of an Org file are kept.
+Each is called with the file's name and returns a directory, or nil for
+a file it says nothing about; `org-moor-sources-directory' is the answer
+for the rest.  A package that keeps a file's sources beside the file --
+a document's in a directory of its own, say -- adds one here.")
 
-;;;; The store
+(defconst org-moor-record-file "moor.org"
+  "Name of the file in a source's directory saying what the source is.")
 
-(defun org-moor-store-path (id)
-  "Return the store directory for the source ID.
-The first two characters name a directory and the rest one below it, as
-`org-attach-id-uuid-folder-format' does, so that no directory grows long."
+(defconst org-moor--record-keys
+  '((:origin . "MOOR_ORIGIN")
+    (:via . "MOOR_VIA")
+    (:file . "MOOR_FILE")
+    (:taken . "MOOR_TAKEN"))
+  "The properties of a record, by the keys a RECORD plist has them under.
+Origin: where the source was when it was taken, a URL or a path, kept
+after it changes or is gone.  Via: how it arrived, as a word: web, file,
+mail, chat.  File: the copy's name in the source's directory.  Taken:
+when, as an inactive timestamp.")
+
+;;;; Where sources are
+
+(defun org-moor-org-file ()
+  "Return the Org file this buffer stands for.
+Its own, or, in a copy of a heading taken out by org-dock, the heading's."
+  (or (org-dock-origin-file) buffer-file-name))
+
+(defun org-moor-sources (&optional file)
+  "Return the sources directory of FILE, by default this buffer's Org file."
+  (let ((file (or file (org-moor-org-file))))
+    (file-name-as-directory
+     (expand-file-name
+      (or (and file (run-hook-with-args-until-success
+                     'org-moor-sources-directory-functions file))
+          org-moor-sources-directory)))))
+
+(defun org-moor-source-directory (id &optional sources)
+  "Return the directory of source ID in SOURCES, by default this buffer's.
+The id's first two characters name a directory and the rest one below
+it, as `org-attach-id-uuid-folder-format' does, so that no directory
+grows long."
   (unless (and (stringp id) (> (length id) 2))
     (error "org-moor: not an id: %S" id))
   (file-name-as-directory
    (expand-file-name (concat (substring id 0 2) "/" (substring id 2))
-                     org-moor-store-directory)))
+                     (or sources (org-moor-sources)))))
 
-(defun org-moor-copy-path (id file)
-  "Return the path of FILE, the copy of source ID, in the store."
-  (expand-file-name file (org-moor-store-path id)))
+;;;; Records
 
-;;;; Sources
+(defun org-moor--record-in (dir id)
+  "Return the record of source ID in its directory DIR, or nil."
+  (let ((file (expand-file-name org-moor-record-file dir)))
+    (when (file-readable-p file)
+      (with-temp-buffer
+        (let ((coding-system-for-read 'utf-8))
+          (insert-file-contents file))
+        (let ((record (list :id id :dir dir))
+              (case-fold-search t))
+          (pcase-dolist (`(,key . ,name) org-moor--record-keys)
+            (goto-char (point-min))
+            (when (re-search-forward
+                   (concat "^[ \t]*:" name ":[ \t]*\\(.*?\\)[ \t]*$") nil t)
+              (setq record (plist-put record key (match-string 1)))))
+          (goto-char (point-min))
+          (when (re-search-forward "^#\\+title:[ \t]*\\(.*?\\)[ \t]*$" nil t)
+            (setq record (plist-put record :title (match-string 1))))
+          (let ((copy (and (plist-get record :file)
+                           (expand-file-name (plist-get record :file) dir))))
+            (plist-put record :copy (and copy (file-exists-p copy) copy))))))))
 
-(defun org-moor-source-p (&optional pom)
-  "Non-nil when the heading at POM is a source."
-  (and (org-entry-get pom org-moor-property-origin) t))
+(defun org-moor-record (id &optional sources)
+  "Return source ID as a plist, read from its record, or nil.
+In SOURCES, by default this buffer's sources directory.  Keys are :id,
+:title, :origin, :via, :file, :taken, :dir, its directory, and :copy,
+the copy's path while it is there."
+  (org-moor--record-in (org-moor-source-directory id sources) id))
 
-(defun org-moor-source (&optional pom)
-  "Return the source at POM as a plist, or nil if the heading is not one.
-Keys are :id :origin :via :file :taken and :copy, the copy's full path when
-the heading names one and it is still in the store."
-  (when (org-moor-source-p pom)
-    (let* ((id (org-entry-get pom "ID"))
-           (file (org-entry-get pom org-moor-property-file))
-           (copy (and id file (org-moor-copy-path id file))))
-      (list :id id
-            :origin (org-entry-get pom org-moor-property-origin)
-            :via (org-entry-get pom org-moor-property-via)
-            :file file
-            :taken (org-entry-get pom org-moor-property-taken)
-            :copy (and copy (file-exists-p copy) copy)))))
+(defun org-moor-find-record (id)
+  "Return source ID from this buffer's sources directory, or the default's.
+A link written where one sources directory is read, and followed where
+another is, still finds its source on a machine that has both."
+  (or (org-moor-record id)
+      (org-moor-record id org-moor-sources-directory)))
 
-(defun org-moor-set-source (origin via &optional file pom)
-  "Make the heading at POM a source from ORIGIN, arrived VIA.
-FILE is the copy's name in the store, if there is one.  Return the id."
-  (let ((id (org-id-get-create pom)))
-    (org-entry-put pom org-moor-property-origin origin)
-    (org-entry-put pom org-moor-property-via (format "%s" via))
-    (when file
-      (org-entry-put pom org-moor-property-file file))
-    (org-entry-put pom org-moor-property-taken
-                   (format-time-string (org-time-stamp-format t t)))
-    id))
+(defun org-moor--record-text (record)
+  "Return the text of a record file for RECORD."
+  (concat ":PROPERTIES:\n"
+          (mapconcat (pcase-lambda (`(,key . ,name))
+                       (when-let* ((value (plist-get record key)))
+                         (format "%-13s %s\n" (concat ":" name ":") value)))
+                     org-moor--record-keys "")
+          ":END:\n"
+          "#+title: " (or (plist-get record :title) "") "\n"))
 
-(defun org-moor--sources-at ()
-  "Return the sources at and under the heading at point, as markers."
-  (org-with-wide-buffer
-   (org-back-to-heading t)
-   (let ((end (save-excursion (org-end-of-subtree t t) (point)))
-         found)
-     (while (< (point) end)
-       (when (and (org-at-heading-p) (org-moor-source-p))
-         (push (point-marker) found))
-       (outline-next-heading))
-     (nreverse found))))
+(defun org-moor--write-text (file text)
+  "Write TEXT to FILE, as UTF-8."
+  (let ((coding-system-for-write 'utf-8-unix))
+    (with-temp-file file (insert text))))
+
+(defun org-moor-new-source (title origin via &optional sources)
+  "Make a source titled TITLE from ORIGIN, arrived VIA, and return its record.
+In SOURCES, by default this buffer's sources directory.  Its directory
+and record are made; its copy is for the caller to put there."
+  (let* ((id (org-id-uuid))
+         (dir (org-moor-source-directory id sources))
+         (record (list :id id :dir dir :title title :origin origin
+                       :via (format "%s" via)
+                       :taken (format-time-string (org-time-stamp-format t t)))))
+    (make-directory dir t)
+    (org-moor--write-text (expand-file-name org-moor-record-file dir)
+                          (org-moor--record-text record))
+    record))
+
+(defun org-moor-record-set (record key value)
+  "Set KEY of RECORD to VALUE in its record file, and return RECORD so.
+KEY is :title or a key of `org-moor--record-keys'.  Only that line is
+written, so that anything else written in the record stays."
+  (let ((file (expand-file-name org-moor-record-file (plist-get record :dir)))
+        (case-fold-search t))
+    (with-temp-buffer
+      (let ((coding-system-for-read 'utf-8))
+        (insert-file-contents file))
+      (goto-char (point-min))
+      (if (eq key :title)
+          (if (re-search-forward "^#\\+title:.*$" nil t)
+              (replace-match (concat "#+title: " value) t t)
+            (goto-char (point-max))
+            (unless (bolp) (insert "\n"))
+            (insert "#+title: " value "\n"))
+        (let ((name (or (alist-get key org-moor--record-keys)
+                        (error "org-moor: not a key of a record: %S" key))))
+          (if (re-search-forward (concat "^[ \t]*:" name ":.*$") nil t)
+              (replace-match (format "%-13s %s" (concat ":" name ":") value) t t)
+            (if (re-search-forward "^[ \t]*:END:" nil t)
+                (progn (beginning-of-line)
+                       (insert (format "%-13s %s\n" (concat ":" name ":") value)))
+              (goto-char (point-min))
+              (insert ":PROPERTIES:\n"
+                      (format "%-13s %s\n" (concat ":" name ":") value)
+                      ":END:\n")))))
+      (let ((coding-system-for-write 'utf-8-unix))
+        (write-region nil nil file nil 'silent))))
+  (let ((record (plist-put record key value)))
+    (if (eq key :file)
+        (let ((copy (expand-file-name value (plist-get record :dir))))
+          (plist-put record :copy (and (file-exists-p copy) copy)))
+      record)))
 
 ;;;; Places
 
 (defun org-moor-link-parse (path)
   "Split the `moor:' link PATH into (ID . PLACE).
-PLACE is a page number, a text to search for, or nil."
+PLACE is a number -- a page in a PDF, a line in anything else -- a text
+to search for, as links written before lines were used have, or nil."
   (if (string-match "\\`\\([^:]+\\)\\(?:::\\(.+\\)\\)?\\'" path)
       (let ((place (match-string 2 path)))
         (cons (match-string 1 path)
@@ -124,15 +219,17 @@ PLACE is a page number, a text to search for, or nil."
 
 (defcustom org-moor-text-extensions
   '("txt" "md" "markdown" "org" "csv" "tsv" "json" "yaml" "yml" "rst" "tex" "log")
-  "Extensions of copies Emacs reads as text, where a place is a text.
-A place in such a copy is found by searching for it, so it survives the
-copy's lines moving."
+  "Extensions of copies Emacs reads as text, where a place is a line."
   :type '(repeat string)
   :group 'org-moor)
 
 (defun org-moor-text-file-p (file)
   "Return non-nil when FILE is read as text; see `org-moor-text-extensions'."
   (member (downcase (or (file-name-extension file) "")) org-moor-text-extensions))
+
+(defun org-moor-pdf-p (file)
+  "Return non-nil when FILE is a PDF, where a place is a page."
+  (string-match-p "\\.pdf\\'" (downcase file)))
 
 (defun org-moor-text-regexp (text)
   "Return a regexp finding TEXT however its whitespace is broken."
@@ -149,29 +246,91 @@ Leave point where it is, and say so, when TEXT is not found."
         (progn (goto-char pos) (recenter))
       (message "org-moor: not found: %s" text))))
 
+;;;; What an agent reads
+
+(define-obsolete-variable-alias 'org-moor-draft-converters
+  'org-moor-readable-converters "0.2")
+
+(defcustom org-moor-readable-converters
+  '(("docx" . org-moor-pandoc)
+    ("pptx" . org-moor-pandoc)
+    ("odt" . org-moor-pandoc)
+    ("epub" . org-moor-pandoc)
+    ("html" . org-moor-pandoc)
+    ("htm" . org-moor-pandoc))
+  "How a copy is made readable by an agent, by extension.
+Each function is called with the copy's path and returns the path of a
+file to read in its place.  A copy whose extension is not here is read
+as it is: text, Markdown and PDF need nothing."
+  :type '(alist :key-type string :value-type function)
+  :group 'org-moor)
+
+(defun org-moor--process-string (program &rest args)
+  "Return what PROGRAM prints with ARGS, or signal with what it complained."
+  (unless (executable-find program)
+    (user-error "org-moor: %s is not installed" program))
+  (with-temp-buffer
+    (let ((status (let ((coding-system-for-read 'utf-8))
+                    (apply #'call-process program nil t nil args))))
+      (unless (eq status 0)
+        (user-error "org-moor: %s failed: %s" program
+                    (string-trim (buffer-string))))
+      (buffer-string))))
+
+(defun org-moor-pandoc (file)
+  "Return FILE turned into Markdown by pandoc, beside it.
+Made once, and again only when FILE is newer; it goes with the copy."
+  (let ((md (concat file ".md")))
+    (unless (file-newer-than-file-p md file)
+      (org-moor--process-string "pandoc" "--to=gfm" "--wrap=none" "-o" md file))
+    md))
+
+(defun org-moor-readable (copy)
+  "Return the file an agent reads for COPY."
+  (let ((fn (cdr (assoc (downcase (or (file-name-extension copy) ""))
+                        org-moor-readable-converters))))
+    (if fn (funcall fn copy) copy)))
+
+(defun org-moor--made-readable (copy)
+  "Return the file COPY was made readable as, if it was, or nil."
+  (and (assoc (downcase (or (file-name-extension copy) "")) org-moor-readable-converters)
+       (let ((md (concat copy ".md")))
+         (and (file-exists-p md) md))))
+
+;;;; Opening
+
 (defcustom org-moor-open-function nil
   "Function called with a path to open a copy, or nil for `org-open-file'.
 Give it your own policy for which files the OS opens and which Emacs reads,
 so that it is decided once.  A place with a page in a PDF is opened in
 Emacs regardless, since only there can the page be sought; so is a place
-with a text in a copy read as text."
+in a copy read as text."
   :type '(choice (const :tag "org-open-file" nil) function)
   :group 'org-moor)
 
 (defun org-moor-open-copy (file &optional place)
   "Open FILE, at PLACE when there is one and Emacs can show it.
-PLACE is a page of a PDF, or a text in a copy read as text."
-  (cond
-   ((and (integerp place) (string-match-p "\\.pdf\\'" file))
-    (find-file file)
-    (cond ((and (derived-mode-p 'pdf-view-mode) (fboundp 'pdf-view-goto-page))
-           (pdf-view-goto-page place))
-          ((and (derived-mode-p 'doc-view-mode) (fboundp 'doc-view-goto-page))
-           (doc-view-goto-page place))))
-   ((and (stringp place) (org-moor-text-file-p file))
-    (find-file file)
-    (org-moor-goto-text place))
-   (t (funcall (or org-moor-open-function #'org-open-file) file))))
+PLACE is a page of a PDF; a line of a copy read as text, or of what a
+copy was made readable as, where an agent read it; or a text to find."
+  (let ((readable (and (integerp place) (not (org-moor-pdf-p file))
+                       (not (org-moor-text-file-p file))
+                       (org-moor--made-readable file))))
+    (cond
+     ((and (integerp place) (org-moor-pdf-p file))
+      (find-file file)
+      (cond ((and (derived-mode-p 'pdf-view-mode) (fboundp 'pdf-view-goto-page))
+             (pdf-view-goto-page place))
+            ((and (derived-mode-p 'doc-view-mode) (fboundp 'doc-view-goto-page))
+             (doc-view-goto-page place))))
+     ((and (integerp place) (or (org-moor-text-file-p file) readable))
+      (find-file (or readable file))
+      (goto-char (point-min))
+      (forward-line (1- place))
+      (recenter))
+     ((and (stringp place) (org-moor-text-file-p file))
+      (find-file file)
+      (org-moor-goto-text place))
+     (t (funcall (or org-moor-open-function #'org-open-file) file)))))
 
 (defun org-moor-open-origin (origin)
   "Open ORIGIN: a URL in the browser, a path where it still is."
@@ -181,21 +340,139 @@ PLACE is a page of a PDF, or a text in a copy read as text."
          (funcall (or org-moor-open-function #'org-open-file) origin))
         (t (user-error "org-moor: the origin is gone: %s" origin))))
 
+(defvar-local org-moor--read-for nil
+  "In a buffer showing a copy, a marker at the heading it was opened from.
+Where what is noted from it is written; see `org-moor-insert-place'.")
+
+(defun org-moor--heading-marker ()
+  "Return a marker at the heading point is in, or nil."
+  (and (derived-mode-p 'org-mode)
+       (save-excursion
+         (unless (org-before-first-heading-p)
+           (org-back-to-heading t)
+           (point-marker)))))
+
+(defun org-moor-open-record (record &optional place from)
+  "Open the copy of RECORD at PLACE, or else its origin.
+FROM, a marker at a heading, is kept in the copy's buffer as the heading
+it is read for."
+  (cond
+   ((plist-get record :copy)
+    (org-moor-open-copy (plist-get record :copy) place)
+    (when (and from (equal (file-truename (or buffer-file-name ""))
+                           (file-truename (plist-get record :copy))))
+      (setq org-moor--read-for from)))
+   ((plist-get record :origin)
+    (org-moor-open-origin (plist-get record :origin)))
+   (t (user-error "org-moor: %s has neither copy nor origin" (plist-get record :id)))))
+
 (defun org-moor-link-follow (path _arg)
-  "Open the place PATH: the copy at its page or text, or else the origin."
+  "Open the place PATH: the copy at its page or line, or else the origin."
   (pcase-let* ((`(,id . ,place) (org-moor-link-parse path))
-               (marker (or (org-id-find id 'marker)
-                           (user-error "org-moor: no source %s" id)))
-               (source (org-with-point-at marker (org-moor-source))))
-    (set-marker marker nil)
-    (cond
-     ((plist-get source :copy)
-      (org-moor-open-copy (plist-get source :copy) place))
-     ((plist-get source :origin)
-      (org-moor-open-origin (plist-get source :origin)))
-     (t (user-error "org-moor: %s has neither copy nor origin" id)))))
+               (record (or (org-moor-find-record id)
+                           (user-error "org-moor: no source %s in %s" id
+                                       (abbreviate-file-name (org-moor-sources))))))
+    (org-moor-open-record record place (org-moor--heading-marker))))
 
 (org-link-set-parameters "moor" :follow #'org-moor-link-follow)
+
+;;;; Links
+
+(defun org-moor-link (record &optional place kind)
+  "Return a link to RECORD, or to PLACE in it, named by the source's title.
+KIND is `page' or `line', what PLACE is.  The name is the title, so that
+which source it is can be read where the link is: no heading says it."
+  (let ((id (plist-get record :id))
+        (title (or (plist-get record :title) "source")))
+    (org-link-make-string
+     (if place (format "moor:%s::%d" id place) (format "moor:%s" id))
+     (if place
+         (format "%s %s %d" title (if (eq kind 'page) "p." "l.") place)
+       title))))
+
+(defconst org-moor--link-re "\\[\\[moor:\\([^]:\n]+\\)\\(?:::\\([^]\n]*\\)\\)?\\]"
+  "A `moor:' link's start, its id in group 1 and its place in group 2.")
+
+(defun org-moor-ids-in (beg end)
+  "Return the ids of the sources linked from BEG to END, each once.
+In the order they are first linked; a link in a property counts."
+  (let (ids)
+    (save-excursion
+      (goto-char beg)
+      (while (re-search-forward org-moor--link-re end t)
+        (cl-pushnew (match-string-no-properties 1) ids :test #'equal)))
+    (nreverse ids)))
+
+(defun org-moor-link-at-point ()
+  "Return the id of the `moor:' link at point, or nil.
+In a property too, where Org does not see a link as one."
+  (when (org-in-regexp org-link-bracket-re 1)
+    (let ((link (org-link-unescape (match-string-no-properties 1))))
+      (and (string-prefix-p "moor:" link)
+           (car (org-moor-link-parse (substring link 5)))))))
+
+;;;; Handed to an agent with a copy
+
+(defun org-moor-link-file (type path)
+  "Return the file a `moor:' link of PATH points to, for an agent to read.
+TYPE is the link's type.  As (FILE . NAME): the copy, made readable, and
+the source named by its id and its title, which a place is cited by.
+Nil when the source has no copy."
+  (when (equal type "moor")
+    (let* ((record (ignore-errors (org-moor-find-record (car (org-moor-link-parse path)))))
+           (copy (and record (plist-get record :copy))))
+      (and copy
+           (cons
+            ;; A copy that cannot be made readable is handed over as it is,
+            ;; rather than stopping the asking.
+            (condition-case err
+                (org-moor-readable copy)
+              (error
+               (message "org-moor: %s handed over as it is: %s"
+                        (file-name-nondirectory copy) (error-message-string err))
+               copy))
+            (format "moor:%s  %s" (plist-get record :id) (or (plist-get record :title) "")))))))
+
+(defun org-moor-batch-command (sources)
+  "Return the command line that takes a source into SOURCES, as this Emacs runs it.
+FILE-OR-URL and TITLE stand for what is taken and its title; see
+`org-moor-batch-take'."
+  (let ((dir-of (lambda (library)
+                  (shell-quote-argument
+                   (directory-file-name (file-name-directory (locate-library library))) t))))
+    (format "%s --batch -L %s -L %s -l org-moor -f org-moor-batch-take %s FILE-OR-URL TITLE"
+            (shell-quote-argument (expand-file-name invocation-name invocation-directory) t)
+            (funcall dir-of "org-moor") (funcall dir-of "org-dock")
+            (shell-quote-argument (directory-file-name (expand-file-name sources)) t))))
+
+(defun org-moor-request-text (request)
+  "Tell an agent how to cite a source, and how to take one in.
+REQUEST is the plist `org-dock-agent-function' gets.  Into the sources
+directory of the file the copy's heading is from."
+  (concat
+   "## Sources\n\n"
+   "When you write something a source says, put a link to its place right\n"
+   "after it:\n\n"
+   "- page 12 of a PDF:            [[moor:ID::12][TITLE p. 12]]\n"
+   "- line 123 of any other file:  [[moor:ID::123][TITLE l. 123]]\n\n"
+   "ID and TITLE are those of the source, as named under Linked files, and a\n"
+   "line is a line of its file there.\n\n"
+   "A file or a web page that is not a source yet is taken in by this\n"
+   "command, which prints a link to it, [[moor:ID][TITLE]]:\n\n"
+   "    " (org-moor-batch-command (org-moor-sources (plist-get request :origin))) "\n"))
+
+(add-hook 'org-dock-link-file-functions #'org-moor-link-file)
+(add-hook 'org-dock-request-functions #'org-moor-request-text 10)
+
+;; The same, and the `moor:' link, from the package's autoloads, so that they
+;; hold before anything of org-moor has been used: a link to a source can be
+;; followed, and a heading with sources taken out and handed to an agent, in
+;; an Emacs that has only just started.
+;;;###autoload (autoload 'org-moor-link-follow "org-moor")
+;;;###autoload (autoload 'org-moor-link-file "org-moor")
+;;;###autoload (autoload 'org-moor-request-text "org-moor")
+;;;###autoload (with-eval-after-load 'ol (org-link-set-parameters "moor" :follow #'org-moor-link-follow))
+;;;###autoload (with-eval-after-load 'org-dock (add-hook 'org-dock-link-file-functions #'org-moor-link-file) (add-hook 'org-dock-request-functions #'org-moor-request-text 10))
 
 (provide 'org-moor-core)
 ;;; org-moor-core.el ends here

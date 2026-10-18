@@ -2,7 +2,7 @@
 
 ;;; Commentary:
 
-;; emacs --batch -Q -L . -L test -l test/org-moor-sweep-test.el -f ert-run-tests-batch-and-exit
+;; emacs --batch -Q -L . -L ../org-dock -L test -l test/org-moor-sweep-test.el -f ert-run-tests-batch-and-exit
 
 ;;; Code:
 
@@ -54,9 +54,8 @@
 
 (ert-deftest org-moor-test-put-away-and-take ()
   (org-moor-test--with-notes "* Topic\n"
-    (let* ((root (file-name-directory buffer-file-name))
-           (dl (file-name-as-directory (expand-file-name "dl" root)))
-           (proj (file-name-as-directory (expand-file-name "proj" root)))
+    (let* ((dl (file-name-as-directory (expand-file-name "dl" dir)))
+           (proj (file-name-as-directory (expand-file-name "proj" dir)))
            (file (expand-file-name "minutes.docx" dl))
            (org-moor-move-directories (list dl))
            (notes (current-buffer)))
@@ -70,10 +69,10 @@
           (should-not (file-exists-p file))
           (should (file-exists-p (car moved)))))
       (goto-char (point-min))
-      (should (re-search-forward "^\\*\\* minutes$" nil t))
-      (should (plist-get (org-moor-source) :copy))
-      (should (equal (plist-get (org-moor-source) :origin)
-                     (expand-file-name "minutes.docx" proj))))))
+      (should (re-search-forward "^\\[\\[moor:\\([^]]+\\)\\]\\[minutes\\]\\]$" nil t))
+      (let ((record (org-moor-record (match-string 1))))
+        (should (plist-get record :copy))
+        (should (equal (plist-get record :origin) (expand-file-name "minutes.docx" proj)))))))
 
 (ert-deftest org-moor-test-sweep-lists-the-pile ()
   (let* ((dl (file-name-as-directory (make-temp-file "dl" t)))

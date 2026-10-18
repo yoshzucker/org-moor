@@ -21,19 +21,22 @@ seconds, whenever you are asked, however long it has been.
 
 So this package does five things, and none of them is to organise:
 
-| Step   | What it does                                                         |
-|--------+----------------------------------------------------------------------|
-| Take   | bring a thing in when you meet it, which is usually outside Emacs    |
-| Draft  | write what it means, in a capture-like buffer, beside the source     |
-| Tie    | join what you wrote to the source, and to the place inside it        |
-| Return | get back to the heading, to the copy, to the place, to the origin    |
-| Re-tie | move a source to another heading, gather, or let a copy go           |
+| Step   | What it does                                                        |
+|--------+---------------------------------------------------------------------|
+| Take   | bring a thing in when you meet it, which is usually outside Emacs   |
+| Write  | write what it means, in the heading, beside the source as you read  |
+| Tie    | join what you wrote to the source, and to the place inside it       |
+| Return | get back to the heading, to the copy, to the place, to the origin   |
+| Re-tie | link a source from anywhere else, retitle it, or let its copy go    |
 
-What the package fixes is the structure that holds these together:
-properties, blocks, and where copies are kept.  What you write and how you
-arrange it under a heading is yours; there are no prescribed sections.
+What the package fixes is what holds these together: a link from what you
+wrote to the source, and where sources are kept.  What you write, where,
+and how you arrange it under a heading is yours; there are no prescribed
+sections, and no heading has to be a source's.
 
 * Install
+
+org-moor needs [[https://github.com/yoshzucker/org-dock][org-dock]], which takes a heading out to be written in.
 
 #+begin_src emacs-lisp
 (use-package org-moor
@@ -41,7 +44,8 @@ arrange it under a heading is yours; there are no prescribed sections.
                       :files ("*.el" ("script" "script/*")))
   :defer t
   :commands (org-moor-quote org-moor-take-file org-moor-take-url
-             org-moor-draft org-moor-noter org-moor-jump org-moor-sweep)
+             org-moor-noter org-moor-insert-place org-moor-jump
+             org-moor-sweep org-moor-retitle)
   :init
   (with-eval-after-load 'org-protocol
     (org-moor-protocol-setup)))
@@ -71,27 +75,28 @@ its URL.
 
 The settings most worth giving:
 
+- ~org-moor-sources-directory~: where sources are kept.
 - ~org-moor-move-directories~: where things pile up; files there are moved
   when taken, and listed by ~org-moor-sweep~.
 - ~org-moor-directory-roots~: where ~org-moor-put-away~ offers to put files.
 - ~org-moor-open-function~: your own policy for opening files.
-- ~org-moor-draft-assist-function~: an assistant to help with a draft.
+- ~org-dock-agent-function~, org-dock's: an agent to help write a heading.
 
 * Commands
 
-| Command                      | Does                                                     |
-|------------------------------+----------------------------------------------------------|
-| ~org-moor-quote~             | quote the clipboard, titled                              |
-| ~org-moor-take-file~         | take a file (in Dired, the one at point)                 |
-| ~org-moor-take-url~          | take a web page                                          |
-| ~org-moor-draft~             | draft what a heading means, and write it in              |
-| ~org-moor-noter~             | read a source beside its heading; ~i~ notes              |
-| ~org-moor-insert-note~       | from a copy being read, add its place to the draft       |
-| ~org-moor-jump~              | back to any heading something was taken to               |
-| ~org-moor-open-source~       | open a source's copy, or its origin                      |
-| ~org-moor-sweep~             | what piled up, as one Dired buffer, newest first         |
-| ~org-moor-put-away~          | move files into a directory of yours (and take them)     |
-| ~org-moor-prune~             | choose which copies to let go                            |
+| Command                   | Does                                                      |
+|---------------------------+-----------------------------------------------------------|
+| ~org-moor-quote~          | quote the clipboard, titled                               |
+| ~org-moor-take-file~      | take a file (in Dired, the one at point)                  |
+| ~org-moor-take-url~       | take a web page                                           |
+| ~org-moor-noter~          | read a source beside its heading; ~i~ notes, ~q~ is done  |
+| ~org-moor-insert-place~   | note the place being read, in the heading it is read for  |
+| ~org-moor-jump~           | back to any heading something was taken to                |
+| ~org-moor-open-source~    | open a source's copy, or its origin                       |
+| ~org-moor-retitle~        | give a source another title                               |
+| ~org-moor-sweep~          | what piled up, as one Dired buffer, newest first          |
+| ~org-moor-put-away~       | move files into a directory of yours (and take them)      |
+| ~org-moor-prune~          | choose which copies to let go                             |
 
 With a prefix, the taking commands ask for the heading even in Org.
 
@@ -101,55 +106,66 @@ Five words carry the weight, and they are kept apart on purpose.
 
 - a *heading* is always one of yours, in any of your Org files.  The
   package writes into it; it does not decide where it lives.
-- a *source* is something you took in: a web page, a file, a message.  It
-  has an /origin/ -- where it was when you met it, a URL or a path -- which
-  is kept even after the origin changes or disappears.
-- a *copy* is a source's bytes, kept in the store.  A source may have no
-  copy (a URL you only link to) or lose it (a copy let go); its origin and
-  what you wrote about it remain.
-- the *store* is the directory copies live in, one directory per source,
-  named by the source's id.  Nothing in it is meant to be browsed or
-  arranged by hand: it is reached from Org, the way a database is reached
-  through its queries, which is what spares you from filing.
-- a *place* is a position inside a source -- a page, a slide -- that a note
+- a *source* is something you took in: a web page, a file.  It has an
+  /origin/ -- where it was when you met it, a URL or a path -- which is
+  kept even after the origin changes or disappears.
+- a *copy* is a source's bytes, kept with it.  A source may have no copy
+  (a URL you only link to) or lose it (a copy let go); its origin and what
+  you wrote about it remain.
+- the *sources directory* is where sources are kept, a directory each,
+  named by the source's id.  Nothing in it is meant to be arranged by
+  hand: it is reached from Org, the way a database is reached through its
+  queries, which is what spares you from filing.
+- a *place* is a position inside a source -- a page, a line -- that a note
   points to.
 
-A *note* is what you write.  It is plain Org under the heading, and the
+A *note* is what you write.  It is plain Org under a heading, and the
 package does not look inside it, except to find where it points.
 
 * Structure
 
-** A source is a heading
+** A source is a directory
 
-Each source is a heading of its own, usually under the heading it belongs
-to, with these properties:
+Each source is a directory of the sources directory, named by its id as
+~org-attach~ names its own: the id's first two characters, and the rest
+below them.  In it are its copy and its record, ~moor.org~, which says what
+it is in a property drawer and a title:
 
-| Property        | Holds                                                    |
-|-----------------+----------------------------------------------------------|
-| ~ID~            | the source's id; also names its directory in the store   |
-| ~MOOR_ORIGIN~   | where it was: a URL, or the path it was taken from       |
-| ~MOOR_VIA~      | how it arrived: ~web~, ~file~, ~mail~, ~chat~, ...       |
-| ~MOOR_FILE~     | the copy's file name in the store, if it has one         |
-| ~MOOR_TAKEN~    | when it was taken, an inactive timestamp                 |
-| ~NOTER_DOCUMENT~ | the copy's path, when org-noter can read it             |
+| Property      | Holds                                                    |
+|---------------+----------------------------------------------------------|
+| ~MOOR_ORIGIN~ | where it was: a URL, or the path it was taken from       |
+| ~MOOR_VIA~    | how it arrived: ~web~, ~file~, ~mail~, ~chat~, ...       |
+| ~MOOR_FILE~   | the copy's file name, if it has one                      |
+| ~MOOR_TAKEN~  | when it was taken, an inactive timestamp                 |
 
-~NOTER_DOCUMENT~ is written so that an org-noter session opens on the
-heading as it is; notes org-noter writes there, with their ~NOTER_PAGE~, are
-places like any other.
+#+begin_example
+sources/6f/1c.../manual.pdf
+sources/6f/1c.../moor.org
+
+:PROPERTIES:
+:MOOR_ORIGIN: https://example.sharepoint.com/.../manual.pdf
+:MOOR_VIA:    chat
+:MOOR_FILE:   manual.pdf
+:MOOR_TAKEN:  [2026-10-17 Sat 10:12]
+:END:
+,#+title: Approval manual 2026
+#+end_example
+
+What you write points to a source with a ~moor:~ link, from any heading,
+or from a property, as often as you like; a heading may link to many
+sources, and a source be linked from many headings.  A link is named by
+the source's title, since no heading says which source it is:
 
 #+begin_example
 ,* Expense approval, new rules
-,** Approval manual 2026
-:PROPERTIES:
-:ID:             6f1c...
-:MOOR_ORIGIN:    https://example.sharepoint.com/.../manual.pdf
-:MOOR_VIA:       chat
-:MOOR_FILE:      manual.pdf
-:MOOR_TAKEN:     [2026-10-17 Sat 10:12]
-:NOTER_DOCUMENT: ~/notes/source/6f/1c.../manual.pdf
-:END:
-Approval goes to the department head before finance. [[moor:6f1c...::12][p. 12]]
+[[moor:6f1c...][Approval manual 2026]]
+Approval goes to the department head before finance.
+[[moor:6f1c...::12][Approval manual 2026 p. 12]]
 #+end_example
+
+The record is the source's, so it goes where the copy goes, and whatever
+is written about the source in Org can be moved, rewritten or thrown
+away without losing where it came from.
 
 ** Words taken as they are
 
@@ -165,13 +181,23 @@ Can we keep the old form for this month?
 
 ** Places
 
-A place is written as a ~moor:~ link: ~moor:ID::PAGE~, or in a copy read
-as text -- see ~org-moor-text-extensions~ -- ~moor:ID::TEXT~, a few words
-found by searching for them, so that the place survives lines moving.
-Following it opens the copy at the page or the words; without a copy, the
-origin.  A ~moor:ID~ link with no place is the source itself.
+A place is written ~moor:ID::N~: page N of a PDF, or line N of any other
+copy -- one read as text, see ~org-moor-text-extensions~, or what a copy
+was made readable as.  A copy is not changed once taken, so its lines
+stay where they were.  Following the link opens the copy there; without a
+copy, the origin.  A ~moor:ID~ link with no place is the source itself.
+A link of a few words, ~moor:ID::TEXT~, as places were written before,
+still finds them by searching.
 
-** Taking a file
+** Taking
+
+~org-moor-take-file~ and ~org-moor-take-url~ ask for a title -- the file's
+name, the page's, what was sent with it -- and write a link named by it,
+on a line of its own: at point in Org, after the line it is on, or at the
+end of the heading's own text when point is on a heading.  The source goes
+in the sources directory of that file.  From outside Org, or with a
+prefix, a heading is asked for.  A heading taken out by org-dock is
+written in its copy.
 
 ~org-moor-take-file~ moves a file that is in one of
 ~org-moor-move-directories~ -- where things pile up, such as downloads --
@@ -184,9 +210,10 @@ at point.
 Wherever a heading is asked for, an existing one can be picked or a new
 one made in the same prompt: a name from the refile targets is that
 heading, ~PARENT/NAME~ makes NAME under PARENT, any other name makes a
-top-level heading in the inbox, and nothing is the inbox.  A directory is
-asked for the same way, under ~org-moor-directory-roots~; a path that does
-not exist yet is made once you agree.
+top-level heading in the inbox, and nothing makes one there titled by
+what is taken.  A directory is asked for the same way, under
+~org-moor-directory-roots~; a path that does not exist yet is made once
+you agree.
 
 ** Sweeping
 
@@ -195,67 +222,82 @@ Dired buffer, newest first, so each file is decided while it is still
 known.  Everything Dired does works there.  ~org-moor-put-away~ moves the
 file at point, or the marked ones, into a directory of yours;
 ~org-moor-put-away-and-take~ also takes each from there as a copy.  A
-directory is renamed as work goes on, so what Org points to is the copy in
-the store, never the directory.
+directory is renamed as work goes on, so what Org points to is the copy
+among the sources, never the directory.
 
-** Drafts
+** Writing, and reading beside it
 
-~org-moor-draft~ opens a draft for the heading at point, as ~org-capture~
-does (in Dired, after taking the file at point), starting from the
-region, else the heading's quotes, else nothing.  The sources are not
-copied in: they are read beside it with ~org-moor-noter~, and their places
-added from there.
+A heading is written in where it is, or taken out by org-dock -- ~M-x
+org-dock~ -- into a copy of its own, written back on ~C-c C-c~.  What is
+noted from a source goes there.
 
-~C-c C-c~ writes the draft at the end of the heading's own text; headings
-in it become the heading's children.  ~C-c C-k~ throws it away.
+~org-moor-noter~, on a heading, reads a source it links to, or one a
+heading under it does, beside it, as org-noter does: a PDF, or a copy read
+as text, opens on the left in ~org-moor-noter-mode~, and the heading on the
+right, taken out to be written in.  A PDF is shown by pdf-tools when it is
+there, else by DocView; a text is read-only, with its line marked.  The
+keys you move with are left alone -- Evil's among them -- ~i~ notes, and
+~q~ writes the heading back and puts the windows back.
 
-~C-c C-a~ asks ~org-moor-draft-assist-function~ to do something with the
-draft -- what, it asks first; nothing is its usual help.  It is given the
-draft, the heading's text, and the heading's sources, those under it
-too, as files to read: text, Markdown and PDF as they are, the others
-made readable once by ~org-moor-draft-converters~ (pandoc, to Markdown
-beside the copy).  What it gives back is set into the draft as
-conflicts, one for each place it differs, kept or refused one by one with
-~smerge-mode~: nothing changes but what you take.  An answer to a
-question arrives the same way, to be read and refused.
+~org-moor-insert-place~, ~i~ there, notes the page shown -- in a text, the
+line point is on -- as a link, and the text selected, quoted under it.
+They go in the heading after the line its point is on, so notes and
+places alternate as you read and write.  The heading is the one beside;
+for a copy opened by following a link, the heading the link was in; else
+one that links to the source, asked for.  A file that is not a source yet
+is taken first.  In an org-noter session it calls ~org-noter-insert-note~
+instead, so one key serves wherever you read.
 
-** Notes from where you read
+An agent asked to help with a heading taken out -- ~C-c C-;~ in its copy,
+see org-dock -- is handed the files of the sources it links to, to read:
+text, Markdown and PDF as they are, the others made readable once by
+~org-moor-readable-converters~ (pandoc, to Markdown beside the copy).  It
+is told which sources they are, and to cite a place as the links here do.
 
-~org-moor-noter~, on a heading, reads its source, or one under it, beside
-the heading, as org-noter does: a PDF, or a copy read as text, opens on
-the left in ~org-moor-noter-mode~, and the source's heading on the right.
-A PDF is shown by pdf-tools when it is there, else by DocView; a text is
-read-only, with its line marked.  The keys you move with are left alone
--- Evil's among them -- ~i~ notes, and ~q~ puts the windows back.
+~org-moor-open-source~, on a heading, opens the copy of a source it, or a
+heading under it, links to; with a prefix, the origin.
 
-~org-moor-insert-note~, in a buffer showing a copy, adds the page you are
-on -- in a text, the words at point, as few as find them -- and the text
-you selected to the draft for the source's heading, and opens it.  In an
-org-noter session it calls ~org-noter-insert-note~ instead, so one command
-serves wherever you read.  Pages read one after another collect in one
-draft, which C-c C-c writes in as any other.  A file that is not a source
-yet is taken first.
+** Titles
 
-~org-moor-open-source~, on a heading, opens the copy of its source or of
-one under it; with a prefix, the origin.
+A source's title is in its record, out of the way, so ~org-moor-retitle~
+gives it another: on a link to it, in a copy of it, or on a heading
+linking to it.  The links in the buffer named by the old title are named
+by the new one, their places kept; links elsewhere keep their names,
+which are only names.
 
 ** Letting copies go
 
-~org-moor-prune~ lists the copies, largest first, with when each was taken
-and whether its origin is a URL.  ~d~ marks, ~u~ unmarks, ~x~ lets the
-marked ones go: the bytes are deleted, and the heading, what you wrote and
-the origin stay.
+~org-moor-prune~ lists the sources with a copy, largest first, with when
+each was taken, whether its origin is a URL, and whether anything still
+links to it.  ~d~ marks, ~u~ unmarks, ~x~ lets the marked ones go: the
+bytes are deleted, and the record, with the origin, stays.  ~t~ retitles,
+~RET~ opens.
 
-** The store
+** The sources directory
 
-~org-moor-store-directory~ holds the copies.  Keep it next to your Org
-files, so that they travel together, and out of everyday search: a store of
-PDFs and slides makes a text search slow, and is better searched on purpose,
-with a tool that reads such files.  ~org-moor-store-directory~ is that root.
+~org-moor-sources-directory~ holds the sources.  Keep it next to your Org
+files, so that they travel together, and out of everyday search: a
+directory of PDFs and slides makes a text search slow, and is better
+searched on purpose, with a tool that reads such files.  Its records are
+Org files, but not notes: leave it out of whatever gathers your notes.
+
+A file can keep its sources apart -- a document's, in a directory of its
+own -- by a function in ~org-moor-sources-directory-functions~, which says
+where a file's sources are.  A link is followed in the sources of the
+file it is in, and failing that in ~org-moor-sources-directory~.
 
 Images that are part of what you write -- a screenshot, a figure -- are not
 sources: they have no origin elsewhere and belong with ~org-attach~ as
 before.
+
+* Tests
+
+#+begin_src sh
+emacs --batch -Q -L . -L ../org-dock -L test \
+      -l test/org-moor-take-test.el -l test/org-moor-core-test.el \
+      -l test/org-moor-return-test.el -l test/org-moor-place-test.el \
+      -l test/org-moor-sweep-test.el -f ert-run-tests-batch-and-exit
+#+end_src
 
 * Status
 

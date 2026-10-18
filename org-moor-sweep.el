@@ -12,7 +12,7 @@
 ;; Files pile up where they arrive -- downloads, a desktop -- and clearing
 ;; them all at once, days later, is hours of remembering what each one
 ;; was.  A sweep is that pile as one Dired buffer, newest first, so that
-;; each file is decided while it is still known: taken into the store,
+;; each file is decided while it is still known: taken into the sources,
 ;; put away in a directory of your own, both, or thrown away.
 ;;
 ;; It is Dired, not a list of its own, so everything Dired does works on it:
@@ -23,7 +23,7 @@
 ;; Putting a file away and taking it are two acts, and both can be wanted.
 ;; A directory is where a file can be found without Org, and is renamed and
 ;; reorganised as work goes on; so a source taken from there keeps a copy
-;; of its own in the store, and Org never depends on where the file went.
+;; of its own in the sources, and Org never depends on where the file went.
 
 ;;; Code:
 

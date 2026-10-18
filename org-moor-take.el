@@ -11,9 +11,11 @@
 
 ;; Taking is the step that happens when you meet a thing, which is usually
 ;; outside Emacs, so every command here asks as little as it can: a title,
-;; and where it goes.  Where it goes is anywhere: the heading at point when
-;; you are in Org, else one you pick from your refile targets, else
-;; `org-moor-inbox-file'.
+;; and where it goes.  Where it goes is anywhere: point when you are in Org,
+;; else a heading you pick from your refile targets, else
+;; `org-moor-inbox-file'.  What goes there is a link to the source, on a
+;; line of its own; the source itself goes in that file's sources
+;; directory, and no heading is made for it.
 
 ;;; Code:
 
@@ -69,10 +71,10 @@ The target is a marker at a heading, a file (its top level), or `inbox'."
      ((assoc answer table) (org-moor--target-at (assoc answer table)))
      ((and (string-match "\\`\\(.*\\)/\\([^/]+\\)\\'" answer)
            (assoc (match-string 1 answer) table))
-      (org-moor-insert-source-heading
+      (org-moor-insert-heading
        (org-moor--target-at (assoc (match-string 1 answer) table))
        (match-string 2 answer)))
-     (t (org-moor-insert-source-heading 'inbox answer)))))
+     (t (org-moor-insert-heading 'inbox answer)))))
 
 (defun org-moor--target (pick)
   "Return where a taken thing goes: a marker, a file, or `inbox'.
@@ -100,8 +102,8 @@ last heading there; `inbox' is the inbox file's top level."
   (unless (eobp) (forward-line 1))
   (unless (bolp) (insert "\n")))
 
-(defun org-moor-insert-source-heading (target title)
-  "Insert a heading titled TITLE for a source at TARGET; return its marker.
+(defun org-moor-insert-heading (target title)
+  "Insert a heading titled TITLE at TARGET; return its marker.
 Under the heading TARGET is in, as its last child.  At the top level, at
 the end of the file, when TARGET is before the first heading, a file, or
 `inbox'."
@@ -123,6 +125,56 @@ the end of the file, when TARGET is before the first heading, a file, or
        (let ((start (point)))
          (insert (make-string (1+ level) ?*) " " title "\n")
          (copy-marker start))))))
+
+(define-obsolete-function-alias 'org-moor-insert-source-heading
+  #'org-moor-insert-heading "0.2")
+
+(defun org-moor--writable (marker)
+  "Return MARKER, or where to write instead when its heading is out.
+A heading taken out by org-dock is written in its copy, where it can
+be; the marker returned is at the same heading there."
+  (with-current-buffer (marker-buffer marker)
+    (if-let* ((copy (org-dock-copy-of marker)))
+        (let ((line (save-excursion
+                      (goto-char marker)
+                      (org-back-to-heading t)
+                      (buffer-substring-no-properties (point) (line-end-position)))))
+          (with-current-buffer copy
+            (save-excursion
+              (goto-char (point-min))
+              (copy-marker (if (search-forward line nil t)
+                               (line-beginning-position)
+                             (point-min))))))
+      marker)))
+
+(defun org-moor--target-sources (target)
+  "Return the sources directory of the file TARGET is in.
+TARGET is as `org-moor--target' returns it."
+  (cond ((markerp target)
+         (with-current-buffer (marker-buffer target) (org-moor-sources)))
+        ((stringp target) (org-moor-sources (expand-file-name target)))
+        (t (org-moor-sources
+            (expand-file-name (or org-moor-inbox-file org-default-notes-file))))))
+
+(defun org-moor-insert-link-line (target title link)
+  "Write LINK on a line of its own at TARGET, and return a marker at it.
+TARGET is as `org-moor--target' returns it.  A marker on a heading's
+line puts the line at the end of the heading's own text, and anywhere
+else after the line it is on.  A file, or `inbox', is given a new
+heading at its top level titled TITLE, the link in it."
+  (let ((target (if (markerp target)
+                    (org-moor--writable target)
+                  (org-moor-insert-heading target title))))
+    (with-current-buffer (marker-buffer target)
+      (org-with-wide-buffer
+       (goto-char target)
+       (if (save-excursion (beginning-of-line) (org-at-heading-p))
+           (progn (beginning-of-line) (org-moor--end-of-entry))
+         (unless (bolp)
+           (end-of-line)
+           (if (eobp) (insert "\n") (forward-char 1))))
+       (prog1 (point-marker)
+         (insert link "\n"))))))
 
 (defun org-moor-quote-string (title text &optional time)
   "Return TEXT as a quote block titled TITLE, taken at TIME."
@@ -155,8 +207,8 @@ TITLE says who it is from and about what: \"Chat from Robin\"."
   (let* ((text (org-moor--clipboard))
          (target (org-moor--target pick))
          (target (if (markerp target)
-                     target
-                   (org-moor-insert-source-heading target title))))
+                     (org-moor--writable target)
+                   (org-moor-insert-heading target title))))
     (with-current-buffer (marker-buffer target)
       (org-with-wide-buffer
        (goto-char target)
@@ -190,41 +242,41 @@ it, and taking it leaves it where it was."
        (fboundp 'dired-get-filename)
        (dired-get-filename nil t)))
 
-(defcustom org-moor-noter-extensions '("pdf" "epub" "djvu")
-  "Extensions of copies org-noter can open; NOTER_DOCUMENT is written for these."
-  :type '(repeat string)
-  :group 'org-moor)
-
-(defun org-moor--write-noter (marker copy)
-  "Point org-noter at COPY from the source at MARKER, when it can read it."
-  (when (member (downcase (or (file-name-extension copy) ""))
-                org-moor-noter-extensions)
-    (org-entry-put marker "NOTER_DOCUMENT" (abbreviate-file-name copy))))
-
-(defun org-moor--undo-source (marker id)
-  "Remove the source heading at MARKER and the store directory of ID.
-For a taking that failed halfway, so that it leaves nothing behind."
-  (with-current-buffer (marker-buffer marker)
-    (org-with-wide-buffer
-     (goto-char marker)
-     (delete-region (point) (save-excursion (org-end-of-subtree t t) (point)))))
-  (let ((dir (org-moor-store-path id)))
-    (when (and (file-directory-p dir) (directory-empty-p dir))
-      (delete-directory dir))))
-
 (defvar org-moor--default-title nil
   "Title offered for the next file taken, when the caller knows a better
 one than its name -- a document's own title, sent from outside Emacs.")
 
+(defun org-moor-take-file-to (file sources &optional title via move origin)
+  "Take FILE into SOURCES as a source titled TITLE, and return its record.
+The copy is FILE moved there with MOVE, else copied.  TITLE is the file's
+name without its extension when nil; VIA says how it arrived, `file' when
+nil; ORIGIN is where it came from, FILE itself when nil.  Nothing is
+written in Org: a link to it is the caller's, with `org-moor-link'."
+  (let* ((file (expand-file-name file))
+         (name (file-name-nondirectory file))
+         (record (org-moor-new-source (or title (file-name-sans-extension name))
+                                      (or origin file) (or via 'file) sources))
+         (copy (expand-file-name name (plist-get record :dir))))
+    (condition-case err
+        (if move
+            (rename-file file copy)
+          (copy-file file copy nil t))
+      (error
+       (delete-directory (plist-get record :dir) t)
+       (signal (car err) (cdr err))))
+    (org-moor-record-set record :file name)))
+
 ;;;###autoload (autoload 'org-moor-take-file "org-moor" nil t)
 (defun org-moor-take-file (file &optional pick via flip origin)
-  "Take FILE as a source: a heading for it and its copy in the store.
-At point when in Org; with PICK, or from outside Org, under a chosen
-heading.  VIA says how it arrived, `file' when nil.  The original is moved
-when it is in `org-moor-move-directories' and copied otherwise; FLIP turns
-that round for this once.  ORIGIN is where it came from, when that is
-not FILE itself -- a copy saved from a document opened from the web.
-Return the marker of the new heading.
+  "Take FILE as a source: its copy in the sources, a link to it here.
+At point when in Org; with PICK, or from outside Org, at a chosen
+heading -- see `org-moor-insert-link-line'.  The source goes in the
+sources directory of the file the link goes in.  VIA says how it
+arrived, `file' when nil.  The original is moved when it is in
+`org-moor-move-directories' and copied otherwise; FLIP turns that round
+for this once.  ORIGIN is where it came from, when that is not FILE
+itself -- a copy saved from a document opened from the web.
+Return a marker at the link.
 
 Interactively FILE is the one at point in Dired, else read.  One
 \\[universal-argument] picks the heading and asks VIA; two also flip."
@@ -245,25 +297,16 @@ Interactively FILE is the one at point in Dired, else read.  One
                              (or org-moor--default-title
                                  (file-name-sans-extension name))))
          (target (org-moor--target pick))
-         (marker (org-moor-insert-source-heading target title))
-         (id (org-with-point-at marker
-               (org-moor-set-source (or origin file) (or via 'file) name)))
-         (copy (org-moor-copy-path id name)))
-    (org-moor--release target)
-    (condition-case err
-        (progn
-          (make-directory (file-name-directory copy) t)
-          (if move
-              (rename-file file copy)
-            (copy-file file copy nil t)))
-      (error
-       (org-moor--undo-source marker id)
-       (signal (car err) (cdr err))))
+         (record (condition-case err
+                     (org-moor-take-file-to file (org-moor--target-sources target)
+                                            title via move origin)
+                   (error (org-moor--release target)
+                          (signal (car err) (cdr err))))))
     (when (and move (fboundp 'dired-remove-file))
       (dired-remove-file file))
-    (org-moor--write-noter marker copy)
-    (message "Took %s (%s)" name (if move "moved" "copied"))
-    marker))
+    (prog1 (org-moor-insert-link-line target title (org-moor-link record))
+      (org-moor--release target)
+      (message "Took %s (%s)" name (if move "moved" "copied")))))
 
 ;;;; Web pages
 
@@ -294,7 +337,7 @@ callback taking non-nil on success.  Nil keeps only the URL."
                                       (file-exists-p file))))))))
 
 (defconst org-moor-snapshot-file "page.html"
-  "Name of a web page's copy in its store directory.")
+  "Name of a web page's copy in its directory.")
 
 (defcustom org-moor-download-extensions
   '("pdf" "pptx" "ppt" "docx" "doc" "xlsx" "xls" "csv" "epub" "zip" "txt" "md")
@@ -339,36 +382,71 @@ By curl when there is one, following redirects; else by `url-copy-file'."
   (let ((text (ignore-errors (string-trim (org-moor--clipboard)))))
     (and text (string-match-p "\\`https?://[^ \t\n]+\\'" text) text)))
 
+(defun org-moor-take-url-to (url sources &optional title wait)
+  "Take URL into SOURCES as a source titled TITLE, and return its record.
+Its copy is kept as `org-moor-take-url' keeps one, in the background, or
+with WAIT before this returns.  TITLE is the file's name, for a URL that
+is a file, else the URL, when nil.  Nothing is written in Org."
+  (let* ((name (org-moor-url-file-name url))
+         (title (or title (and name (file-name-sans-extension name)) url))
+         (record (org-moor-new-source title url 'web sources))
+         (file (or name org-moor-snapshot-file))
+         (keep (if name #'org-moor-download org-moor-snapshot-function))
+         (done (not keep)))
+    (when keep
+      (funcall keep url (expand-file-name file (plist-get record :dir))
+               (lambda (ok)
+                 (if (not ok)
+                     (message "org-moor: kept only the URL of %s" title)
+                   (org-moor-record-set record :file file)
+                   (message "Kept %s" title))
+                 (setq done t))))
+    (when wait
+      (while (not done) (accept-process-output nil 0.1)))
+    (or (org-moor-record (plist-get record :id) sources) record)))
+
 ;;;###autoload (autoload 'org-moor-take-url "org-moor" nil t)
 (defun org-moor-take-url (url &optional title pick)
   "Take URL as a source, titled TITLE, and keep a copy of it.
 A URL that is a file -- see `org-moor-url-file-name' -- is downloaded as
 that file; a page is kept by `org-moor-snapshot-function'.  At point when
-in Org; with PICK, under a chosen heading.  Interactively the URL on the
-clipboard is offered."
+in Org; with PICK, at a chosen heading, as `org-moor-take-file' takes a
+file.  Interactively the URL on the clipboard is offered.  Return a
+marker at the link."
   (interactive
    (list (read-string "URL: " (org-moor--clipboard-url)) nil current-prefix-arg))
   (let* ((name (org-moor-url-file-name url))
          (title (read-string "Title: " (or title
                                            (and name (file-name-sans-extension name)))))
          (target (org-moor--target pick))
-         (marker (org-moor-insert-source-heading target title))
-         (id (org-with-point-at marker (org-moor-set-source url 'web)))
-         (file (or name org-moor-snapshot-file))
-         (keep (if name #'org-moor-download org-moor-snapshot-function)))
-    (org-moor--release target)
-    (when keep
-      (let ((copy (org-moor-copy-path id file)))
-        (make-directory (file-name-directory copy) t)
-        (funcall keep url copy
-                 (lambda (ok)
-                   (if (not ok)
-                       (message "org-moor: kept only the URL of %s" title)
-                     (when (buffer-live-p (marker-buffer marker))
-                       (org-entry-put marker org-moor-property-file file)
-                       (org-moor--write-noter marker copy))
-                     (message "Kept %s" title))))))
-    marker))
+         (record (org-moor-take-url-to url (org-moor--target-sources target) title)))
+    (prog1 (org-moor-insert-link-line target title (org-moor-link record))
+      (org-moor--release target))))
+
+;;;; From outside Emacs
+
+(defun org-moor-batch-take ()
+  "Take a file or a web page into a sources directory, and print a link to it.
+For an agent, which cannot ask Emacs:
+
+  emacs --batch -L DIR -L ORG-DOCK-DIR -l org-moor \\
+        -f org-moor-batch-take SOURCES FILE-OR-URL [TITLE]
+
+SOURCES is the sources directory; a file is copied, never moved, and
+titled by its name unless TITLE is given.  What is printed is a link to
+the source named by its title, [[moor:ID][TITLE]]."
+  (let* ((sources (file-name-as-directory
+                   (expand-file-name (or (pop command-line-args-left)
+                                         (error "org-moor: no sources directory")))))
+         (what (or (pop command-line-args-left)
+                   (error "org-moor: no file or URL to take")))
+         (title (pop command-line-args-left))
+         (record (if (string-match-p "\\`https?://" what)
+                     (org-moor-take-url-to what sources title t)
+                   (unless (file-regular-p what)
+                     (error "org-moor: not a file: %s" what))
+                   (org-moor-take-file-to what sources title))))
+    (princ (concat (org-moor-link record) "\n"))))
 
 ;;;; org-protocol
 

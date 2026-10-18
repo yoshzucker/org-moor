@@ -9,50 +9,54 @@
 
 ;;; Commentary:
 
-;; Two directions between a note and its source.
+;; Two directions between a heading and a source it links to.
 ;;
-;; From the source: reading a copy, `org-moor-insert-note' adds the page you
-;; are on -- and the text you selected, if any -- to the draft for the
-;; source's heading, as a `moor:' link, and opens the draft.  Done page by
-;; page, the draft collects what was read where, without a session to keep
-;; open; C-c C-c writes it in, as any draft.  In a copy read as text there
-;; are no pages: the place is the words at point, as few as find it.  In an
-;; org-noter session it leaves the note to org-noter, so that one command
-;; serves wherever you read.
+;; From the source: reading a copy, `org-moor-insert-place' notes the page
+;; shown, or the line point is on, as a link -- and what is selected,
+;; quoted under it -- in the heading it is read for, taken out by org-dock
+;; to be written in.  The heading is the one beside, when reading with
+;; `org-moor-noter'; else the one the copy was opened from; else one that
+;; links to the source, asked for.
 ;;
 ;; `org-moor-noter' sets the reading up as org-noter does: the copy on the
-;; left, the source's heading on the right, and `i' to note -- a link in
-;; the draft, the same for a PDF as for a text.  A text is shown read-only,
-;; with the line marked, so that moving about it cannot change it.
+;; left, the heading on the right, taken out to be written in, and `i' to
+;; note.  A text is shown read-only, with its line marked, so that moving
+;; about it cannot change it.  `q' writes the heading back.
 ;;
-;; From the note: `org-moor-open-source' opens the copy of the source the
-;; heading is, or of one under it; with a prefix, its origin -- the page on
-;; the web, or the file where it was.
+;; From the heading: `org-moor-open-source' opens the copy of a source it
+;; links to; with a prefix, the source's origin -- the page on the web, or
+;; the file where it was.
+;;
+;; `org-moor-retitle' gives a source another title, since the record that
+;; holds it is out of the way, and the links here that bear the old one.
 
 ;;; Code:
 
 (require 'org-moor-core)
 (require 'org-moor-take)
-(require 'org-moor-draft)
+(require 'org-moor-return)
 (require 'cl-lib)
 
 (declare-function pdf-view-active-region-text "pdf-view")
 (declare-function pdf-view-active-region-p "pdf-view")
 (declare-function image-mode-window-get "image-mode")
-(declare-function org-noter "org-noter")
 (declare-function org-noter-insert-note "org-noter")
 (defvar org-noter--session)
 
 ;;;; Which source a file is
 
-(defun org-moor-copy-id (file)
-  "Return the id of the source whose copy FILE is, or nil.
-Read from where FILE lies in the store: the two levels of its directory
-are the id, split after its second character."
-  (let ((rel (file-relative-name (file-truename file)
-                                 (file-truename org-moor-store-directory))))
-    (when (string-match "\\`\\([^/.][^/]\\)/\\([^/]+\\)/[^/]+\\'" rel)
-      (concat (match-string 1 rel) (match-string 2 rel)))))
+(defun org-moor-copy-record (file)
+  "Return the source whose copy FILE is, or nil.
+Read from where FILE lies: in a source's directory, beside its record,
+two levels below whichever sources directory that is.  What a copy was
+made readable as lies there too, and is the same source's."
+  (let* ((dir (file-name-directory (file-truename file)))
+         (above (file-name-directory (directory-file-name dir)))
+         (two (file-name-nondirectory (directory-file-name above))))
+    (when (and (= (length two) 2)
+               (file-exists-p (expand-file-name org-moor-record-file dir)))
+      (org-moor--record-in dir (concat two (file-name-nondirectory
+                                            (directory-file-name dir)))))))
 
 (defun org-moor-current-page ()
   "Return the page shown in this buffer, or nil."
@@ -69,142 +73,237 @@ are the id, split after its second character."
         ((use-region-p)
          (buffer-substring-no-properties (region-beginning) (region-end)))))
 
-(defcustom org-moor-place-text-length 80
-  "Most characters a place in a text copy is given to find itself."
-  :type 'natnum
-  :group 'org-moor)
+(defun org-moor-current-place ()
+  "Return (PLACE . KIND) for what this buffer shows.
+The page of a PDF, KIND `page'; else the line point is on, or the first
+of those selected, KIND `line'."
+  (if-let* ((page (org-moor-current-page)))
+      (cons page 'page)
+    (cons (line-number-at-pos (if (use-region-p) (region-beginning) (point)))
+          'line)))
 
-(defun org-moor-current-text ()
-  "Return the words at point that find it in this buffer, or nil.
-From the start of the selection, or of the line -- or, with nothing
-after it, of the last line with words -- as few words as make
-their first occurrence this one -- but no more than
-`org-moor-place-text-length' characters, which then find the first one
-alike."
-  (unless (derived-mode-p 'image-mode 'pdf-view-mode 'doc-view-mode)
-    (save-excursion
-      (if (use-region-p) (goto-char (region-beginning)) (back-to-indentation))
-      (skip-chars-forward " \t\n")
-      ;; Nothing after point, as at the end: the last words before it.
-      (when (eobp)
-        (skip-chars-backward " \t\n")
-        (back-to-indentation))
-      (let* ((start (point))
-             (words (split-string
-                     (buffer-substring-no-properties
-                      start (min (point-max) (+ start (* 2 org-moor-place-text-length))))
-                     "[ \t\n]+" t))
-             text)
-        (catch 'found
-          (dolist (word words)
-            (let ((longer (if text (concat text " " word) word)))
-              (when (> (length longer) org-moor-place-text-length)
-                ;; A first word too long, as a URL, is cut to the length.
-                (unless text
-                  (setq text (substring word 0 org-moor-place-text-length)))
-                (throw 'found nil))
-              (setq text longer)
-              (when (= start (save-excursion
-                               (goto-char (point-min))
-                               (re-search-forward (org-moor-text-regexp text))
-                               (match-beginning 0)))
-                (throw 'found nil)))))
-        text))))
-
-;;;; From the source
-
-(defun org-moor-place-string (id place selection &optional line)
-  "Return the draft text for PLACE of source ID, with SELECTION quoted.
-PLACE is a page number, a text to find, or nil for the source itself.
-LINE, the line a text was found on, names its link; the text still finds
-it when the lines have moved."
-  (concat (cond ((integerp place)
-                 (org-link-make-string (format "moor:%s::%d" id place)
-                                       (format "p. %d" place)))
-                (place
-                 (org-link-make-string (format "moor:%s::%s" id place)
-                                       (if line
-                                           (format "l. %d" line)
-                                         (truncate-string-to-width place 30 nil nil "…"))))
-                (t (org-link-make-string (format "moor:%s" id) "source")))
-          "\n"
-          (if selection
+(defun org-moor-place-string (record place kind &optional selection)
+  "Return a link to PLACE of the source RECORD, with SELECTION quoted under it.
+KIND is `page' or `line', what PLACE is; nil PLACE links to the source."
+  (concat (org-moor-link record place kind) "\n"
+          (if (and selection (not (string-blank-p selection)))
               (concat "#+begin_quote\n"
                       (org-escape-code-in-string (string-trim selection))
                       "\n#+end_quote\n")
             "")))
 
-;;;###autoload (autoload 'org-moor-insert-note "org-moor" nil t)
-(defun org-moor-insert-note ()
-  "Add the place shown here, and what is selected, to the source's draft.
-The place is the page, or in a text the words at point.  The buffer is a
-copy in the store, or a file you are then asked to take.  The draft is
-the one `org-moor-draft' opens for the source's heading.  In an
-org-noter session, `org-noter-insert-note' instead."
-  (interactive)
-  (if (bound-and-true-p org-noter--session)
-      (call-interactively #'org-noter-insert-note)
-    (org-moor--insert-note)))
+;;;; The heading a source is read for
 
-(define-obsolete-function-alias 'org-moor-note-here #'org-moor-insert-note "0.1")
+(defun org-moor-headings-linking (id)
+  "Return markers at the headings that link to source ID.
+In the files of `org-moor-files-function' and the Org files open."
+  (let ((files (delete-dups
+                (append (funcall org-moor-files-function)
+                        (delq nil (mapcar (lambda (b)
+                                            (with-current-buffer b
+                                              (and (derived-mode-p 'org-mode)
+                                                   buffer-file-name)))
+                                          (buffer-list))))))
+        (re (concat "\\[\\[moor:" (regexp-quote id) "\\(?:::\\|\\]\\)"))
+        found)
+    (dolist (file files)
+      (when (file-readable-p file)
+        (with-current-buffer (find-file-noselect file)
+          (org-with-wide-buffer
+           (goto-char (point-min))
+           (while (re-search-forward re nil t)
+             (save-excursion
+               (unless (org-before-first-heading-p)
+                 (org-back-to-heading t)
+                 (unless (seq-find (lambda (m) (and (eq (marker-buffer m) (current-buffer))
+                                                    (= m (point))))
+                                   found)
+                   (push (point-marker) found)))))))))
+    (nreverse found)))
 
-(defun org-moor--insert-note ()
-  "Add the place shown here to the source's draft; see `org-moor-insert-note'."
-  (let* ((file (or buffer-file-name
-                   (user-error "org-moor: this buffer is not a file")))
-         (page (or (org-moor-current-page) (org-moor-current-text)))
-         (line (and (stringp page)
-                    (line-number-at-pos (if (use-region-p) (region-beginning) (point)))))
-         (selection (org-moor-current-selection))
-         (windows (current-window-configuration))
-         (id (org-moor-copy-id file))
-         (marker (if id
-                     (or (org-id-find id 'marker)
-                         (user-error "org-moor: no heading for source %s" id))
-                   (unless (y-or-n-p "Not a source yet; take it? ")
-                     (user-error "org-moor: not taken"))
-                   (org-moor-take-file file t)))
-         (id (or id (org-with-point-at marker (org-id-get)))))
-    (org-moor-draft--open marker (org-moor-place-string id page selection line)
-                           windows t)))
-
-;;;; From the note
-
-(defun org-moor--choose-source (markers)
-  "Return one of MARKERS, asking when there is more than one."
+(defun org-moor--choose-heading (markers)
+  "Return one of MARKERS at headings, asking when there is more than one."
   (if (cdr markers)
       (let ((table (mapcar (lambda (m)
-                             (cons (org-with-point-at m (org-get-heading t t t t)) m))
+                             (cons (org-with-point-at m
+                                     (concat (file-name-nondirectory (buffer-file-name))
+                                             ": " (org-format-outline-path
+                                                   (org-get-outline-path t) 1000)))
+                                   m))
                            markers)))
-        (cdr (assoc (completing-read "Source: " table nil t) table)))
+        (cdr (assoc (completing-read "Note in: " table nil t) table)))
     (car markers)))
+
+(defun org-moor--end-of-own-text (pos)
+  "Return the end of the text of the heading at POS, before its first child."
+  (save-excursion
+    (goto-char pos)
+    (org-back-to-heading t)
+    (outline-next-heading)
+    (skip-chars-backward " \t\n")
+    (point)))
+
+(defun org-moor--dock-for (marker)
+  "Return the buffer the heading at MARKER is written in, taken out.
+The copy MARKER is in, when it is in one; the heading's copy, when it is
+out; else the heading taken out now, point at the end of its own text."
+  (with-current-buffer (marker-buffer marker)
+    (cond ((org-dock-origin-file) (current-buffer))
+          ((org-dock-copy-of marker))
+          (t (org-dock-heading marker :at (org-moor--end-of-own-text marker)
+                               :display nil)))))
+
+(defun org-moor--write-in (buffer text)
+  "Write TEXT in BUFFER, as lines of their own after the line point is on.
+Its point as shown, when it is shown, and the window's point follows."
+  (let ((window (get-buffer-window buffer t)))
+    (with-current-buffer buffer
+      (when window (goto-char (window-point window)))
+      (unless (bolp)
+        (end-of-line)
+        (if (eobp) (insert "\n") (forward-char 1)))
+      (insert text)
+      (unless (bolp) (insert "\n"))
+      (when window (set-window-point window (point))))))
+
+(defvar-local org-moor-noter--session nil
+  "In a copy read by `org-moor-noter', a plist.
+:windows, put back when reading stops; :dock, the buffer the heading is
+written in beside it; :own, non-nil when the noter took the heading out,
+and so writes it back when reading stops.")
+
+;;;###autoload (autoload 'org-moor-insert-place "org-moor" nil t)
+(defun org-moor-insert-place ()
+  "Note the place being read in the heading it is read for.
+The page shown, or the line point is on, as a link named by the source's
+title, and what is selected, quoted under it.  They are written in the
+heading taken out by org-dock, after the line its point is on, and the
+heading is shown.  The heading is the one beside, when reading with
+`org-moor-noter'; else the one the copy was opened from; else one that
+links to the source, asked for.  A file that is not a source's copy yet
+is taken first.  In an org-noter session, `org-noter-insert-note' instead."
+  (interactive)
+  (if (and (bound-and-true-p org-noter--session) (not (derived-mode-p 'org-mode)))
+      (call-interactively #'org-noter-insert-note)
+    (let* ((file (or buffer-file-name
+                     (user-error "org-moor: this buffer is not a file")))
+           (place (org-moor-current-place))
+           (selection (org-moor-current-selection))
+           (record (org-moor-copy-record file))
+           (taken (and (not record)
+                       (if (y-or-n-p "Not a source yet; take it? ")
+                           (org-moor-take-file file t)
+                         (user-error "org-moor: not taken"))))
+           (record (or record
+                       (with-current-buffer (marker-buffer taken)
+                         (save-excursion
+                           (goto-char taken)
+                           (and (looking-at org-moor--link-re)
+                                (org-moor-record (match-string 1)))))))
+           (dock (let ((beside (plist-get org-moor-noter--session :dock)))
+                   (if (buffer-live-p beside)
+                       beside
+                     (org-moor--dock-for
+                      (or taken
+                          (and (markerp org-moor--read-for)
+                               (buffer-live-p (marker-buffer org-moor--read-for))
+                               org-moor--read-for)
+                          (org-moor--choose-heading
+                           (org-moor-headings-linking (plist-get record :id)))
+                          (user-error "org-moor: no heading links to this source")))))))
+      (org-moor--write-in dock (org-moor-place-string record (car place) (cdr place)
+                                                      selection))
+      (unless (get-buffer-window dock)
+        (display-buffer dock '((display-buffer-reuse-window display-buffer-pop-up-window)
+                               (inhibit-same-window . t))))
+      (when (use-region-p) (deactivate-mark))
+      (message "org-moor: noted %s %d" (if (eq (cdr place) 'page) "p." "l.") (car place)))))
+
+(define-obsolete-function-alias 'org-moor-insert-note #'org-moor-insert-place "0.2")
+
+;;;; From the heading
+
+(defun org-moor--choose-record (records)
+  "Return one of RECORDS, asking when there is more than one."
+  (if (cdr records)
+      (let ((table (mapcar (lambda (r)
+                             (cons (format "%s  %s" (or (plist-get r :title) "")
+                                           (substring (plist-get r :id) 0 8))
+                                   r))
+                           records)))
+        (cdr (assoc (completing-read "Source: " table nil t) table)))
+    (car records)))
+
+(defun org-moor--record-here ()
+  "Return the source of the link at point, or one the heading links to.
+The heading at point, or a heading under it; asked for when several."
+  (unless (derived-mode-p 'org-mode)
+    (user-error "org-moor: not in an Org buffer"))
+  (if-let* ((id (org-moor-link-at-point)))
+      (or (org-moor-find-record id) (user-error "org-moor: no source %s" id))
+    (let* ((ids (org-with-wide-buffer
+                 (if (org-before-first-heading-p)
+                     (org-moor-ids-in (point-min) (point-max))
+                   (org-back-to-heading t)
+                   (org-moor-ids-in (point) (save-excursion (org-end-of-subtree t t) (point))))))
+           (records (delq nil (mapcar #'org-moor-find-record ids))))
+      (org-moor--choose-record (or records (user-error "org-moor: no source here"))))))
 
 ;;;###autoload (autoload 'org-moor-open-source "org-moor" nil t)
 (defun org-moor-open-source (&optional origin)
-  "Open the copy of the source at point, or of one under it.
+  "Open the copy of the source at point, or one the heading links to.
 With ORIGIN (\\[universal-argument]), open where it came from instead."
   (interactive "P")
-  (org-moor--open-source-at (org-moor--source-here) origin))
-
-(defun org-moor--open-source-at (marker &optional origin)
-  "Open the copy of the source at MARKER, or with ORIGIN its origin."
-  (let ((source (org-with-point-at marker (org-moor-source))))
-    (cond
-     ((and (not origin) (plist-get source :copy))
-      (org-moor-open-copy (plist-get source :copy)))
-     ((plist-get source :origin)
-      (when (and (not origin) (not (plist-get source :copy)))
+  (let ((record (org-moor--record-here)))
+    (if origin
+        (org-moor-open-origin (or (plist-get record :origin)
+                                  (user-error "org-moor: no origin")))
+      (unless (plist-get record :copy)
         (message "org-moor: no copy; opening the origin"))
-      (org-moor-open-origin (plist-get source :origin)))
-     (t (user-error "org-moor: neither copy nor origin")))))
+      (org-moor-open-record record nil (org-moor--heading-marker)))))
 
-(defun org-moor--source-here ()
-  "Return the marker of the source at point, or of one under it."
-  (unless (derived-mode-p 'org-mode)
-    (user-error "org-moor: not in an Org buffer"))
-  (org-moor--choose-source
-   (or (org-moor--sources-at)
-       (user-error "org-moor: no source here"))))
+;;;; A source's title
+
+(defun org-moor--record-at-point ()
+  "Return the source of the link at point, of the copy shown, or the heading's."
+  (or (and buffer-file-name (not (derived-mode-p 'org-mode))
+           (org-moor-copy-record buffer-file-name))
+      (and (derived-mode-p 'org-mode) (org-moor--record-here))
+      (user-error "org-moor: no source here")))
+
+;;;###autoload (autoload 'org-moor-retitle "org-moor" nil t)
+(defun org-moor-retitle (record title)
+  "Give the source RECORD the title TITLE, here and in its record.
+Interactively, the source of the link at point, of the copy shown, or
+one the heading links to.  A link to it in this buffer whose name begins
+with the old title is named with the new one, its place kept; links in
+other files keep their names, which are only names."
+  (interactive
+   (let ((record (org-moor--record-at-point)))
+     (list record (read-string "Title: " (plist-get record :title)))))
+  (let ((old (plist-get record :title))
+        (id (plist-get record :id))
+        (n 0))
+    (org-moor-record-set record :title title)
+    (when (and old (not (string-empty-p old)) (derived-mode-p 'org-mode))
+      (org-with-wide-buffer
+       (goto-char (point-min))
+       (while (re-search-forward org-link-bracket-re nil t)
+         (let ((link (org-link-unescape (match-string-no-properties 1)))
+               (name (match-string-no-properties 2)))
+           (when (and name
+                      (string-prefix-p "moor:" link)
+                      (equal (save-match-data
+                               (car (org-moor-link-parse (substring link 5))))
+                             id)
+                      (string-prefix-p old name)
+                      (not (get-text-property (match-beginning 0) 'read-only)))
+             (replace-match (org-link-make-string
+                             link (concat title (substring name (length old))))
+                            t t)
+             (cl-incf n))))))
+    (message "org-moor: titled %s%s" title
+             (if (> n 0) (format "; %d link%s here renamed" n (if (= n 1) "" "s")) ""))))
 
 ;;;; Reading beside the heading
 
@@ -213,7 +312,7 @@ With ORIGIN (\\[universal-argument]), open where it came from instead."
 
 (defvar org-moor-noter-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map "i" #'org-moor-insert-note)
+    (define-key map "i" #'org-moor-insert-place)
     (define-key map "q" #'org-moor-noter-quit)
     map)
   "Keymap of `org-moor-noter-mode'.
@@ -221,27 +320,11 @@ Only `i' and `q' are bound, so that the keys you move with stay yours.")
 
 (with-eval-after-load 'evil
   (evil-define-key* 'normal org-moor-noter-mode-map
-                    "i" #'org-moor-insert-note
+                    "i" #'org-moor-insert-place
                     "q" #'org-moor-noter-quit))
 
 (defvar-local org-moor-noter--read-only nil
   "Whether the buffer was read-only before `org-moor-noter-mode'.")
-
-(defvar-local org-moor-noter--session nil
-  "In a copy read by `org-moor-noter': (WINDOWS . HEADING-BUFFER).
-WINDOWS are the windows from before, put back on `org-moor-noter-quit'.")
-
-(defun org-moor-noter-quit ()
-  "Stop reading: close the heading beside, and put the windows back."
-  (interactive)
-  (let ((session org-moor-noter--session))
-    (setq org-moor-noter--session nil)
-    (org-moor-noter-mode -1)
-    (when (buffer-live-p (cdr session))
-      (kill-buffer (cdr session)))
-    (if (car session)
-        (set-window-configuration (car session))
-      (quit-window))))
 
 (define-minor-mode org-moor-noter-mode
   "Read a copy without changing it; `i' notes the place at point, `q' stops.
@@ -257,67 +340,62 @@ A text is read-only, and its line marked, while the mode is on."
   (when (fboundp 'evil-normalize-keymaps)
     (evil-normalize-keymaps)))
 
-(defvar-local org-moor--heading-marker nil
-  "In a buffer from `org-moor--heading-buffer', the heading it shows.")
+(defun org-moor-noter--end (source)
+  "Stop reading SOURCE, a buffer, beside its heading; put the windows back."
+  (when (buffer-live-p source)
+    (with-current-buffer source
+      (let ((session org-moor-noter--session))
+        (setq org-moor-noter--session nil)
+        (org-moor-noter-mode -1)
+        (when-let* ((windows (plist-get session :windows)))
+          (set-window-configuration windows))))))
 
-(defun org-moor--heading-show ()
-  "Narrow this buffer to its heading again, and show all of it."
-  (widen)
-  (goto-char org-moor--heading-marker)
-  (org-narrow-to-subtree)
-  (org-fold-show-subtree))
-
-(defun org-moor--heading-buffer (marker)
-  "Return a buffer showing only the source heading at MARKER."
-  (let* ((title (org-with-point-at marker (org-get-heading t t t t)))
-         (name (format "*moor: %s*" title))
-         (buffer (get-buffer name)))
-    (unless (buffer-live-p buffer)
-      (setq buffer (make-indirect-buffer (marker-buffer marker) name t))
-      (with-current-buffer buffer
-        (setq org-moor--heading-marker (copy-marker marker))
-        (org-moor--heading-show)))
-    buffer))
-
-(defun org-moor--heading-refresh ()
-  "Show what was just written at the heading here in its heading buffers.
-Text written at the end of a narrowed indirect buffer falls outside it."
-  (let ((base (or (buffer-base-buffer) (current-buffer)))
-        (pos (point)))
-    (dolist (buffer (buffer-list))
-      (with-current-buffer buffer
-        (when (and org-moor--heading-marker
-                   (eq (buffer-base-buffer) base)
-                   (= org-moor--heading-marker pos))
-          (org-moor--heading-show)
-          (dolist (window (get-buffer-window-list buffer nil t))
-            (set-window-point window (point-max))))))))
-
-(add-hook 'org-moor-draft-written-hook #'org-moor--heading-refresh)
+(defun org-moor-noter-quit ()
+  "Stop reading: write the heading beside back, and put the windows back.
+A heading that was out before reading began is left out, as it was."
+  (interactive)
+  (let* ((session org-moor-noter--session)
+         (dock (plist-get session :dock)))
+    (if (and (plist-get session :own) (buffer-live-p dock))
+        (with-current-buffer dock (org-dock-finish))
+      (org-moor-noter--end (current-buffer)))))
 
 ;;;###autoload (autoload 'org-moor-noter "org-moor" nil t)
 (defun org-moor-noter ()
-  "Read the source at point, or one under it, beside its heading.
-A PDF, or a copy read as text, opens on the left in
-`org-moor-noter-mode', the heading on the right.  `i' notes the place,
-as `org-moor-insert-note'; `q' stops, as `org-moor-noter-quit'.  A PDF is
-shown by pdf-tools when it is there, else by DocView.  Any other copy is
-opened as `org-moor-open-source' would."
+  "Read a source of the heading at point beside the heading, to note it.
+The source of the link at point, or one the heading, or a heading under
+it, links to.  A PDF, or a copy read as text, opens on the left in
+`org-moor-noter-mode'; on the right, the heading, taken out by org-dock
+to be written in.  `i' notes the place there, as `org-moor-insert-place';
+`q' writes the heading back and puts the windows back, as C-c C-c in it
+does.  A PDF is shown by pdf-tools when it is there, else by DocView.
+Any other copy is opened as `org-moor-open-source' would."
   (interactive)
-  (let* ((marker (org-moor--source-here))
-         (copy (plist-get (org-with-point-at marker (org-moor-source)) :copy)))
-    (if (and copy (or (org-moor-text-file-p copy)
-                      (string-match-p "\\.pdf\\'" copy)))
+  (let* ((record (org-moor--record-here))
+         (copy (plist-get record :copy)))
+    (if (not (and copy (or (org-moor-text-file-p copy) (org-moor-pdf-p copy))))
+        (org-moor-open-record record nil (org-moor--heading-marker))
+      (let* ((windows (current-window-configuration))
+             (in-copy (org-dock-origin-file))
+             (heading (org-moor--heading-marker))
+             (source nil)
+             (dock (if in-copy
+                       (current-buffer)
+                     (org-dock-heading
+                      heading :at (org-moor--end-of-own-text heading)
+                      :display nil :restore nil
+                      :finish (lambda (&rest _) (org-moor-noter--end source))
+                      :abort (lambda () (org-moor-noter--end source))))))
         ;; The copy is shown only once its window is final: a PDF shown in
         ;; a window that is then split shows nothing in the new one.
-        (let ((windows (current-window-configuration))
-              (heading (org-moor--heading-buffer marker)))
-          (delete-other-windows)
-          (set-window-buffer (split-window-right) heading)
-          (find-file copy)
-          (org-moor-noter-mode 1)
-          (setq org-moor-noter--session (cons windows heading)))
-      (org-moor--open-source-at marker))))
+        (delete-other-windows)
+        (set-window-buffer (split-window-right) dock)
+        (find-file copy)
+        (setq source (current-buffer)
+              org-moor--read-for heading)
+        (org-moor-noter-mode 1)
+        (setq org-moor-noter--session
+              (list :windows windows :dock dock :own (not in-copy)))))))
 
 (provide 'org-moor-place)
 ;;; org-moor-place.el ends here
