@@ -93,6 +93,12 @@ is taken under the first root."
   (and (derived-mode-p 'dired-mode)
        (dired-get-marked-files nil nil nil nil t)))
 
+(defun org-moor--put-away-args ()
+  "Return the files to put away, as Dired has them or read, and where."
+  (list (or (org-moor--files-here)
+            (list (read-file-name "Put away: " nil nil t)))
+        (org-moor-read-directory)))
+
 ;;;###autoload (autoload 'org-moor-put-away "org-moor" nil t)
 (defun org-moor-put-away (files dir &optional take)
   "Move FILES into DIR.  With TAKE, take each from there, as a copy.
@@ -100,10 +106,7 @@ Interactively FILES are the marked files in Dired or the one at point, and
 DIR is read, see `org-moor-read-directory'.
 \\[universal-argument] takes them too.
 Return the files' new paths."
-  (interactive
-   (let ((files (or (org-moor--files-here)
-                    (list (read-file-name "Put away: " nil nil t)))))
-     (list files (org-moor-read-directory) current-prefix-arg)))
+  (interactive (append (org-moor--put-away-args) (list current-prefix-arg)))
   (let (moved)
     (dolist (file files)
       (let ((to (expand-file-name (file-name-nondirectory file) dir)))
@@ -125,10 +128,7 @@ Return the files' new paths."
 ;;;###autoload (autoload 'org-moor-put-away-and-take "org-moor" nil t)
 (defun org-moor-put-away-and-take (files dir)
   "Move FILES into DIR, and take each from there, as a copy."
-  (interactive
-   (let ((files (or (org-moor--files-here)
-                    (list (read-file-name "Put away: " nil nil t)))))
-     (list files (org-moor-read-directory))))
+  (interactive (org-moor--put-away-args))
   (org-moor-put-away files dir t))
 
 ;;;; The sweep

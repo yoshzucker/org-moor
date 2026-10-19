@@ -91,16 +91,27 @@ last heading there; `inbox' is the inbox file's top level."
   "Let go of TARGET when it is a marker."
   (when (markerp target) (set-marker target nil)))
 
-(defun org-moor--at-heading-p ()
-  "Non-nil when point is at the start of a heading."
-  (and (bolp) (org-at-heading-p)))
+(defun org-moor--end-of-own-text (pos)
+  "Return the end of the text of the heading at POS, before its first child."
+  (save-excursion
+    (goto-char pos)
+    (org-back-to-heading t)
+    (outline-next-heading)
+    (skip-chars-backward " \t\n")
+    (point)))
 
 (defun org-moor--end-of-entry ()
-  "Move to the end of this heading's own text, before its first child."
-  (outline-next-heading)
-  (skip-chars-backward " \t\n")
+  "Move to the line after this heading's own text, before its first child."
+  (goto-char (org-moor--end-of-own-text (point)))
   (unless (eobp) (forward-line 1))
   (unless (bolp) (insert "\n")))
+
+(defun org-moor--next-line ()
+  "Move to the start of the line after the one point is on, unless at one.
+At the end of the buffer, the line is made."
+  (unless (bolp)
+    (end-of-line)
+    (if (eobp) (insert "\n") (forward-char 1))))
 
 (defun org-moor-insert-heading (target title)
   "Insert a heading titled TITLE at TARGET; return its marker.
@@ -156,25 +167,38 @@ TARGET is as `org-moor--target' returns it."
         (t (org-moor-sources
             (expand-file-name (or org-moor-inbox-file org-default-notes-file))))))
 
+(defun org-moor-insert-lines (target title text)
+  "Write TEXT, whole lines, at TARGET, and return a marker at its start.
+TARGET is as `org-moor--target' returns it.  A marker on a heading's
+line puts the lines at the end of the heading's own text, and anywhere
+else after the line it is on.  A file, or `inbox', is given a new
+heading at its top level titled TITLE, the lines in it."
+  (let ((at (if (markerp target)
+                (org-moor--writable target)
+              (org-moor-insert-heading target title))))
+    (prog1 (with-current-buffer (marker-buffer at)
+             (org-with-wide-buffer
+              (goto-char at)
+              (if (save-excursion (beginning-of-line) (org-at-heading-p))
+                  (progn (beginning-of-line) (org-moor--end-of-entry))
+                (org-moor--next-line))
+              (prog1 (point-marker)
+                (insert text))))
+      (unless (eq at target) (set-marker at nil)))))
+
 (defun org-moor-insert-link-line (target title link)
   "Write LINK on a line of its own at TARGET, and return a marker at it.
-TARGET is as `org-moor--target' returns it.  A marker on a heading's
-line puts the line at the end of the heading's own text, and anywhere
-else after the line it is on.  A file, or `inbox', is given a new
-heading at its top level titled TITLE, the link in it."
-  (let ((target (if (markerp target)
-                    (org-moor--writable target)
-                  (org-moor-insert-heading target title))))
-    (with-current-buffer (marker-buffer target)
-      (org-with-wide-buffer
-       (goto-char target)
-       (if (save-excursion (beginning-of-line) (org-at-heading-p))
-           (progn (beginning-of-line) (org-moor--end-of-entry))
-         (unless (bolp)
-           (end-of-line)
-           (if (eobp) (insert "\n") (forward-char 1))))
-       (prog1 (point-marker)
-         (insert link "\n"))))))
+As `org-moor-insert-lines' writes."
+  (org-moor-insert-lines target title (concat link "\n")))
+
+(defun org-moor--take-at (target title take)
+  "Take a source at TARGET, titled TITLE, and return a marker at its link.
+TAKE is called with the sources directory of TARGET, and returns the
+record of what it took there.  TARGET is let go of, whatever happens."
+  (unwind-protect
+      (org-moor-insert-link-line
+       target title (org-moor-link (funcall take (org-moor--target-sources target))))
+    (org-moor--release target)))
 
 (defun org-moor-quote-string (title text &optional time)
   "Return TEXT as a quote block titled TITLE, taken at TIME."
@@ -205,18 +229,12 @@ heading at its top level titled TITLE, the link in it."
 TITLE says who it is from and about what: \"Chat from Robin\"."
   (interactive (list (read-string "Title: ") current-prefix-arg))
   (let* ((text (org-moor--clipboard))
-         (target (org-moor--target pick))
-         (target (if (markerp target)
-                     (org-moor--writable target)
-                   (org-moor-insert-heading target title))))
-    (with-current-buffer (marker-buffer target)
-      (org-with-wide-buffer
-       (goto-char target)
-       (if (org-moor--at-heading-p)
-           (org-moor--end-of-entry)
-         (unless (bolp) (end-of-line) (insert "\n")))
-       (insert (org-moor-quote-string title text))))
-    (set-marker target nil)
+         (target (org-moor--target pick)))
+    (unwind-protect
+        (set-marker (org-moor-insert-lines target title
+                                           (org-moor-quote-string title text))
+                    nil)
+      (org-moor--release target))
     (message "Quoted: %s" title)))
 
 ;;;; Files
@@ -296,23 +314,26 @@ Interactively FILE is the one at point in Dired, else read.  One
          (title (read-string (format "Title (%s): " (if move "move" "copy"))
                              (or org-moor--default-title
                                  (file-name-sans-extension name))))
-         (target (org-moor--target pick))
-         (record (condition-case err
-                     (org-moor-take-file-to file (org-moor--target-sources target)
-                                            title via move origin)
-                   (error (org-moor--release target)
-                          (signal (car err) (cdr err))))))
+         (link (org-moor--take-at
+                (org-moor--target pick) title
+                (lambda (sources)
+                  (org-moor-take-file-to file sources title via move origin)))))
     (when (and move (fboundp 'dired-remove-file))
       (dired-remove-file file))
-    (prog1 (org-moor-insert-link-line target title (org-moor-link record))
-      (org-moor--release target)
-      (message "Took %s (%s)" name (if move "moved" "copied")))))
+    (message "Took %s (%s)" name (if move "moved" "copied"))
+    link))
 
 ;;;; Web pages
 
+;; What a URL is -- a page, or a file -- is told by what it sends, not by
+;; how it is spelled: its Content-Type, the name its Content-Disposition
+;; gives, and failing those, its first bytes.  So it is fetched first and
+;; named after.
+
 (defcustom org-moor-snapshot-function #'org-moor-snapshot-monolith
   "Function keeping a web page: called with URL, the file to write and a
-callback taking non-nil on success.  Nil keeps only the URL."
+callback taking non-nil on success.  When it keeps nothing, or is nil,
+the page's HTML is kept as it was sent, without what it links to."
   :type '(choice function (const nil))
   :group 'org-moor)
 
@@ -321,16 +342,36 @@ callback taking non-nil on success.  Nil keeps only the URL."
   :type 'string
   :group 'org-moor)
 
+(defcustom org-moor-cookie-file nil
+  "Cookies, in the Netscape cookies.txt format, sent with every fetch.
+A browser's sign-ins are its own; written out to this file -- by a
+browser extension, say -- they let curl and monolith fetch what is
+behind them.  It is read, never written.  Nil sends none."
+  :type '(choice (const :tag "None" nil) file)
+  :group 'org-moor)
+
+(defun org-moor--cookie-args (flag)
+  "Return FLAG and `org-moor-cookie-file', when there is that file.
+When it is named and is not there, say so: a fetch without it is as
+nobody, and gets a sign-in page."
+  (when org-moor-cookie-file
+    (if (file-readable-p org-moor-cookie-file)
+        (list flag (expand-file-name org-moor-cookie-file))
+      (message "%s" (propertize
+                     (format "org-moor: no cookie file %s; fetching without"
+                             org-moor-cookie-file)
+                     'face 'warning))
+      nil)))
+
 (defun org-moor-snapshot-monolith (url file done)
   "Save URL to FILE with monolith, then call DONE with success."
   (if (not (executable-find org-moor-monolith-program))
-      (progn (message "org-moor: %s not found; kept only the URL"
-                      org-moor-monolith-program)
-             (funcall done nil))
+      (funcall done nil)
     (make-process
      :name "org-moor-snapshot"
      :buffer " *org-moor-snapshot*"
-     :command (list org-moor-monolith-program "-s" "-o" file url)
+     :command `(,org-moor-monolith-program "-s" ,@(org-moor--cookie-args "-C")
+                "-o" ,file ,url)
      :sentinel (lambda (proc _event)
                  (unless (process-live-p proc)
                    (funcall done (and (zerop (process-exit-status proc))
@@ -339,89 +380,275 @@ callback taking non-nil on success.  Nil keeps only the URL."
 (defconst org-moor-snapshot-file "page.html"
   "Name of a web page's copy in its directory.")
 
-(defcustom org-moor-download-extensions
-  '("pdf" "pptx" "ppt" "docx" "doc" "xlsx" "xls" "csv" "epub" "zip" "txt" "md")
-  "Extensions of URLs that are files rather than pages.
-Such a URL is downloaded as it is, not saved as a page: a PDF opened in a
-browser is still a PDF."
-  :type '(repeat string)
+(defcustom org-moor-mime-extensions
+  '(("text/html" . "html") ("application/xhtml+xml" . "html")
+    ("application/pdf" . "pdf")
+    ("text/plain" . "txt") ("text/markdown" . "md") ("text/csv" . "csv")
+    ("application/json" . "json") ("application/xml" . "xml") ("text/xml" . "xml")
+    ("application/rtf" . "rtf")
+    ("application/msword" . "doc")
+    ("application/vnd.openxmlformats-officedocument.wordprocessingml.document" . "docx")
+    ("application/vnd.ms-powerpoint" . "ppt")
+    ("application/vnd.openxmlformats-officedocument.presentationml.presentation" . "pptx")
+    ("application/vnd.ms-excel" . "xls")
+    ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" . "xlsx")
+    ("application/vnd.oasis.opendocument.text" . "odt")
+    ("application/vnd.oasis.opendocument.presentation" . "odp")
+    ("application/vnd.oasis.opendocument.spreadsheet" . "ods")
+    ("application/epub+zip" . "epub") ("application/zip" . "zip")
+    ("image/png" . "png") ("image/jpeg" . "jpg") ("image/gif" . "gif")
+    ("image/svg+xml" . "svg") ("image/webp" . "webp")
+    ("audio/mpeg" . "mp3") ("video/mp4" . "mp4"))
+  "Media types and the extension a file of each is named with.
+The extensions are also those a URL is known by to name a file, so that
+a page sent for one -- a sign-in page -- is told from the file."
+  :type '(alist :key-type string :value-type string)
   :group 'org-moor)
 
+(defcustom org-moor-download-extensions nil
+  "Obsolete: what a URL is, is told by what it sends."
+  :type '(repeat string)
+  :group 'org-moor)
+(make-obsolete-variable 'org-moor-download-extensions 'org-moor-mime-extensions "0.3")
+
 (defcustom org-moor-curl-program "curl"
-  "The curl executable, used to download a file from a URL."
+  "The curl executable, used to fetch a URL."
   :type 'string
   :group 'org-moor)
 
-(defun org-moor-url-file-name (url)
-  "Return the file name URL downloads as, or nil if URL is a page.
-A file is a URL whose path ends in one of `org-moor-download-extensions'."
-  (let* ((path (car (url-path-and-query (url-generic-parse-url url))))
-         (name (and path (file-name-nondirectory
-                          (decode-coding-string (url-unhex-string path) 'utf-8)))))
-    (and name
-         (member (downcase (or (file-name-extension name) ""))
-                 org-moor-download-extensions)
-         name)))
+(defun org-moor--known-name-p (name)
+  "Non-nil when NAME has an extension of `org-moor-mime-extensions'."
+  (rassoc (org-moor-extension name) org-moor-mime-extensions))
 
-(defun org-moor-download (url file done)
-  "Download URL to FILE, then call DONE with success.
-By curl when there is one, following redirects; else by `url-copy-file'."
+(defun org-moor--url-name (url)
+  "Return the last part of URL's path, decoded, or \"\" when it has none."
+  (file-name-nondirectory
+   (decode-coding-string
+    (url-unhex-string (or (car (url-path-and-query (url-generic-parse-url url))) ""))
+    'utf-8)))
+
+(defun org-moor-url-file-name (url)
+  "Return the file name URL is spelled with, or nil if it names none.
+That is the last part of its path, decoded, when its extension is one of
+`org-moor-mime-extensions'."
+  (let ((name (org-moor--url-name url)))
+    (and (org-moor--known-name-p name) name)))
+
+(defun org-moor-url-unwrap (url)
+  "Return the URL of the file URL shows, when URL is a viewer of one.
+A viewer names what it shows in its query: a value there that is itself
+a URL spelled as a file, see `org-moor-url-file-name', is the one meant.
+Anything else is itself."
+  (let ((query (cdr (url-path-and-query (url-generic-parse-url url)))))
+    (or (seq-some (lambda (pair)
+                    (let ((inner (decode-coding-string (or (cadr pair) "") 'utf-8)))
+                      (and (string-match-p "\\`https?://" inner)
+                           (org-moor-url-file-name inner)
+                           inner)))
+                  (and query (url-parse-query-string query)))
+        url)))
+
+(defun org-moor-sniff-type (file)
+  "Return the media type FILE's first bytes show, or nil."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally file nil 0 512)
+    (goto-char (point-min))
+    (skip-chars-forward "\xef\xbb\xbf \t\r\n")
+    (let ((case-fold-search t))
+      (cond ((looking-at-p "%PDF-") "application/pdf")
+            ((looking-at-p "<\\(!doctype html\\|html\\|head\\|body\\|!--\\)") "text/html")
+            ((looking-at-p "PK\3\4") "application/zip")))))
+
+(defun org-moor--disposition-name (header)
+  "Return the file name a Content-Disposition HEADER gives, or nil."
+  (when header
+    (let ((case-fold-search t))
+      (cond ((string-match "filename\\*=\\([^']*\\)'[^']*'\\([^;]+\\)" header)
+             (let ((charset (intern (downcase (match-string 1 header))))
+                   (name (string-trim (match-string 2 header))))
+               (decode-coding-string (url-unhex-string name)
+                                     (if (coding-system-p charset) charset 'utf-8))))
+            ((string-match "filename=\"\\([^\"]+\\)\"" header) (match-string 1 header))
+            ((string-match "filename=\\([^;]+\\)" header)
+             (string-trim (match-string 1 header)))))))
+
+(defun org-moor-copy-name (url type &optional disposition)
+  "Return the name a copy of URL is given, sent as TYPE with DISPOSITION.
+A page is `org-moor-snapshot-file'.  A file is named as its
+Content-Disposition names it, else as its URL is spelled, else
+\"file\"; given the extension of TYPE when its own is not one known."
+  (let* ((ext (cdr (assoc type org-moor-mime-extensions)))
+         (name (or (org-moor--disposition-name disposition)
+                   (let ((last (org-moor--url-name url)))
+                     (and (not (string-empty-p last)) last))
+                   "file")))
+    (cond ((equal ext "html") org-moor-snapshot-file)
+          ((or (not ext) (org-moor--known-name-p name)) name)
+          (t (concat name "." ext)))))
+
+(defun org-moor--curl (url file done)
+  "Fetch URL to FILE by curl; call DONE with success, type and disposition."
+  (make-process
+   :name "org-moor-fetch"
+   :buffer (generate-new-buffer " *org-moor-fetch*")
+   :command `(,org-moor-curl-program "-fsSL" ,@(org-moor--cookie-args "-b")
+              "-o" ,file "-w" "%{content_type}\\n%header{content-disposition}" ,url)
+   :sentinel (lambda (proc _event)
+               (unless (process-live-p proc)
+                 (let ((lines (with-current-buffer (process-buffer proc)
+                                (split-string (buffer-string) "\n"))))
+                   (kill-buffer (process-buffer proc))
+                   (funcall done (zerop (process-exit-status proc))
+                            (car lines) (cadr lines)))))))
+
+(defun org-moor--fetch (url file done)
+  "Fetch URL to FILE; call DONE with success, media type and disposition.
+By curl when there is one, following redirects; else by `url-copy-file',
+which tells neither."
   (if (executable-find org-moor-curl-program)
-      (make-process
-       :name "org-moor-download"
-       :buffer " *org-moor-download*"
-       :command (list org-moor-curl-program "-fsSL" "-o" file url)
-       :sentinel (lambda (proc _event)
-                   (unless (process-live-p proc)
-                     (funcall done (and (zerop (process-exit-status proc))
-                                        (file-exists-p file))))))
-    (funcall done (ignore-errors (url-copy-file url file t) t))))
+      (org-moor--curl url file done)
+    (funcall done (ignore-errors (url-copy-file url file t) t) nil nil)))
+
+(defun org-moor-fetch (url dir done)
+  "Keep a copy of URL in DIR, then call DONE with its name, or nil.
+What it is, is what it sends: a page is kept by
+`org-moor-snapshot-function', or else as its HTML; a file under the name
+`org-moor-copy-name' gives it.  A page sent for a URL spelled as a file
+-- a sign-in page -- is not the file, and nothing is kept."
+  (let ((fetched (make-temp-file (expand-file-name ".fetch" dir))))
+    (org-moor--fetch
+     url fetched
+     (lambda (ok type disposition)
+       (let* ((type (and ok (file-exists-p fetched)
+                         (let ((sent (and type (car (split-string type "[; ]" t)))))
+                           (if (or (not sent) (equal sent "application/octet-stream"))
+                               (or (org-moor-sniff-type fetched) sent)
+                             (downcase sent)))))
+              (name (and type (org-moor-copy-name url type disposition)))
+              (page (equal name org-moor-snapshot-file))
+              (spelled (org-moor-url-file-name url)))
+         (cond
+          ((or (not name)
+               (and page spelled
+                    (not (equal (cdr (assoc "text/html" org-moor-mime-extensions))
+                                (org-moor-extension spelled)))))
+           (ignore-errors (delete-file fetched))
+           (funcall done nil))
+          (t
+           (rename-file fetched (expand-file-name name dir) t)
+           (if (not (and page org-moor-snapshot-function))
+               (funcall done name)
+             (let ((whole (make-temp-file (expand-file-name ".page" dir))))
+               (funcall org-moor-snapshot-function url whole
+                        (lambda (ok)
+                          (if ok
+                              (rename-file whole (expand-file-name name dir) t)
+                            (ignore-errors (delete-file whole)))
+                          (funcall done name))))))))))))
+
+(defconst org-moor-partial-download-regexp
+  "\\.\\(crdownload\\|part\\|partial\\|tmp\\|download\\)\\'"
+  "Names a browser gives a download until it is whole.")
+
+(defcustom org-moor-arriving-timeout 120
+  "Seconds to wait for a copy a browser is downloading."
+  :type 'integer
+  :group 'org-moor)
+
+(defun org-moor--arrived (dir since)
+  "Return the newest file come into DIR since SINCE, or `partial', or nil.
+`partial' while a download there is not yet whole."
+  (let ((new (seq-filter
+              (lambda (f)
+                (and (file-regular-p f)
+                     (not (time-less-p (file-attribute-modification-time
+                                        (file-attributes f))
+                                       since))))
+              (directory-files dir t "\\`[^.]"))))
+    (cond ((seq-some (lambda (f) (string-match-p org-moor-partial-download-regexp f))
+                     new)
+           'partial)
+          (new (car (sort new #'file-newer-than-file-p))))))
+
+(defun org-moor-arriving (dir since)
+  "Return a way to keep a copy that a browser is downloading into DIR.
+The copy is the file come into DIR since SINCE, a time, once it is whole;
+it is moved to the source.  For `org-moor-take-url-to', as KEEP."
+  (let ((since (time-subtract since 2)))
+    (lambda (_url into done)
+      (let ((deadline (+ (float-time) org-moor-arriving-timeout))
+            (size nil)
+            (timer nil))
+        (setq timer
+              (run-with-timer
+               0.5 0.5
+               (lambda ()
+                 (condition-case err
+                     (let ((file (org-moor--arrived dir since)))
+                       (cond
+                        ((and (stringp file)
+                              (eql size (file-attribute-size (file-attributes file)))
+                              (> size 0))
+                         (cancel-timer timer)
+                         (let ((name (file-name-nondirectory file)))
+                           (rename-file file (expand-file-name name into))
+                           (funcall done name)))
+                        ((> (float-time) deadline)
+                         (cancel-timer timer)
+                         (funcall done nil))
+                        (t (setq size (and (stringp file)
+                                           (file-attribute-size
+                                            (file-attributes file)))))))
+                   (error (cancel-timer timer)
+                          (message "org-moor: %s" (error-message-string err))
+                          (funcall done nil))))))))))
 
 (defun org-moor--clipboard-url ()
   "Return the clipboard's text when it is a URL, or nil."
   (let ((text (ignore-errors (string-trim (org-moor--clipboard)))))
     (and text (string-match-p "\\`https?://[^ \t\n]+\\'" text) text)))
 
-(defun org-moor-take-url-to (url sources &optional title wait)
+(defun org-moor-take-url-to (url sources &optional title wait keep)
   "Take URL into SOURCES as a source titled TITLE, and return its record.
-Its copy is kept as `org-moor-take-url' keeps one, in the background, or
-with WAIT before this returns.  TITLE is the file's name, for a URL that
-is a file, else the URL, when nil.  Nothing is written in Org."
-  (let* ((name (org-moor-url-file-name url))
+Its copy is kept by KEEP, `org-moor-fetch' when nil, in the background,
+or with WAIT before this returns: called with URL, the source's
+directory and a function to call with the copy's name there, or nil.
+TITLE is the file's name, for a URL spelled as one, else the URL, when
+nil.  Nothing is written in Org."
+  (let* ((url (org-moor-url-unwrap url))
+         (name (org-moor-url-file-name url))
          (title (or title (and name (file-name-sans-extension name)) url))
          (record (org-moor-new-source title url 'web sources))
-         (file (or name org-moor-snapshot-file))
-         (keep (if name #'org-moor-download org-moor-snapshot-function))
-         (done (not keep)))
-    (when keep
-      (funcall keep url (expand-file-name file (plist-get record :dir))
-               (lambda (ok)
-                 (if (not ok)
-                     (message "org-moor: kept only the URL of %s" title)
-                   (org-moor-record-set record :file file)
-                   (message "Kept %s" title))
-                 (setq done t))))
+         (done nil))
+    (funcall (or keep #'org-moor-fetch) url (plist-get record :dir)
+             (lambda (file)
+               (if (not file)
+                   (message "org-moor: kept only the URL of %s" title)
+                 (org-moor-record-set record :file file)
+                 (message "Kept %s" title))
+               (setq done t)))
     (when wait
       (while (not done) (accept-process-output nil 0.1)))
     (or (org-moor-record (plist-get record :id) sources) record)))
 
 ;;;###autoload (autoload 'org-moor-take-url "org-moor" nil t)
-(defun org-moor-take-url (url &optional title pick)
+(defun org-moor-take-url (url &optional title pick keep)
   "Take URL as a source, titled TITLE, and keep a copy of it.
-A URL that is a file -- see `org-moor-url-file-name' -- is downloaded as
-that file; a page is kept by `org-moor-snapshot-function'.  At point when
-in Org; with PICK, at a chosen heading, as `org-moor-take-file' takes a
-file.  Interactively the URL on the clipboard is offered.  Return a
-marker at the link."
+The copy is what URL sends -- see `org-moor-fetch' -- or what KEEP
+keeps, as `org-moor-take-url-to' says.  At point when in Org; with PICK,
+at a chosen heading, as `org-moor-take-file' takes a file.
+Interactively the URL on the clipboard is offered.  Return a marker at
+the link."
   (interactive
    (list (read-string "URL: " (org-moor--clipboard-url)) nil current-prefix-arg))
-  (let* ((name (org-moor-url-file-name url))
+  (let* ((url (org-moor-url-unwrap url))
+         (name (org-moor-url-file-name url))
          (title (read-string "Title: " (or title
-                                           (and name (file-name-sans-extension name)))))
-         (target (org-moor--target pick))
-         (record (org-moor-take-url-to url (org-moor--target-sources target) title)))
-    (prog1 (org-moor-insert-link-line target title (org-moor-link record))
-      (org-moor--release target))))
+                                           (and name (file-name-sans-extension name))))))
+    (org-moor--take-at (org-moor--target pick) title
+                       (lambda (sources)
+                         (org-moor-take-url-to url sources title nil keep)))))
 
 ;;;; From outside Emacs
 
@@ -450,14 +677,27 @@ the source named by its title, [[moor:ID][TITLE]]."
 
 ;;;; org-protocol
 
+(defun org-moor--file-url-path (url)
+  "Return the file a file: URL names: file:///C:/a%20b.pdf is C:/a b.pdf."
+  (let ((path (decode-coding-string
+               (url-unhex-string (replace-regexp-in-string
+                                  "\\`file:\\(//[^/]*\\)?" "" url))
+               'utf-8)))
+    (if (string-match-p "\\`/[A-Za-z]:" path) (substring path 1) path)))
+
 ;;;###autoload (autoload 'org-moor-protocol "org-moor" nil nil)
 (defun org-moor-protocol (info)
   "org-protocol handler.  INFO is a plist from the protocol URL.
 
   org-protocol://moor?url=URL&title=TITLE
+  org-protocol://moor?url=URL&title=TITLE&arriving=DIR&since=SECONDS
   org-protocol://moor?path=PATH&title=TITLE&origin=ORIGIN&via=VIA
 
-The first takes a page or a file on the web, the second a file on disk;
+The first takes a page or a file on the web.  The second takes a file on
+the web that a browser, signed in where it is, is downloading into DIR:
+its copy is the file come there since SECONDS, a Unix time, moved to the
+source once whole -- see `org-moor-arriving'.  The third takes a file on
+disk, as does a file: URL, which a browser shows for a file it opened;
 ORIGIN, when given, is where that file was opened from.  Either arrives
 from outside Emacs, with no point to go to, so a heading is always picked,
 and Emacs is brought to the front to ask."
@@ -465,12 +705,21 @@ and Emacs is brought to the front to ask."
   (let ((url (plist-get info :url))
         (path (plist-get info :path))
         (title (plist-get info :title)))
+    ;; A file opened in a browser has a file: URL, and is a file on disk.
+    (when (and url (string-match "\\`file:" url))
+      (setq path (org-moor--file-url-path url) url nil))
     (cond
      (path
       (let ((org-moor--default-title title))
         (org-moor-take-file path t (plist-get info :via) nil
                             (plist-get info :origin))))
-     (url (org-moor-take-url url title t))
+     (url (org-moor-take-url
+           url title t
+           (when-let* ((dir (plist-get info :arriving)))
+             (org-moor-arriving
+              dir (if-let* ((since (plist-get info :since)))
+                      (seconds-to-time (string-to-number since))
+                    (current-time))))))
      (t (message "org-moor: protocol URL had no url= or path="))))
   nil)
 

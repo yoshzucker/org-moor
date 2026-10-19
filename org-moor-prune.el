@@ -37,10 +37,8 @@
       (when (file-directory-p two)
         (dolist (dir (directory-files two t "\\`[^.]"))
           (when (file-directory-p dir)
-            (when-let* ((record (org-moor--record-in
-                                 (file-name-as-directory dir)
-                                 (concat (file-name-nondirectory two)
-                                         (file-name-nondirectory dir)))))
+            (when-let* ((record (org-moor--record-in (file-name-as-directory dir)
+                                                     (org-moor--dir-id dir))))
               (push record records))))))
     records))
 
@@ -51,16 +49,10 @@ Its copy, and what was made readable of it."
               (directory-files (plist-get record :dir) t "\\`[^.]")))
 
 (defun org-moor-linked-ids ()
-  "Return the ids linked from the files of `org-moor-files-function', and the
-Org files open, as a hash table."
+  "Return the ids linked from the files of `org-moor-searched-files', as a
+hash table."
   (let ((ids (make-hash-table :test #'equal)))
-    (dolist (file (delete-dups
-                   (append (funcall org-moor-files-function)
-                           (delq nil (mapcar (lambda (b)
-                                               (with-current-buffer b
-                                                 (and (derived-mode-p 'org-mode)
-                                                      buffer-file-name)))
-                                             (buffer-list))))))
+    (dolist (file (org-moor-searched-files))
       (when (file-readable-p file)
         (with-current-buffer (find-file-noselect file)
           (dolist (id (org-with-wide-buffer (org-moor-ids-in (point-min) (point-max))))

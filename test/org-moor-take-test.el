@@ -102,18 +102,43 @@ the copy, with its record, in the file's sources."
           (should (equal (buffer-string)
                          (format "* Topic\nfirst\n[[moor:%s][a]]\nsecond\n" id))))))))
 
-(ert-deftest org-moor-test-take-url-without-snapshot ()
+(defmacro org-moor-test--serving (type disposition body &rest forms)
+  "Run FORMS with every fetch sending BODY as TYPE, with DISPOSITION.
+`fetched' is the URL fetched last.  No snapshot is taken."
+  (declare (indent 3))
+  `(let ((org-moor-snapshot-function nil)
+         (fetched nil))
+     (cl-letf (((symbol-function 'org-moor--fetch)
+                (lambda (url file done) (setq fetched url)
+                  (with-temp-file file (insert ,body))
+                  (funcall done t ,type ,disposition))))
+       (ignore fetched)
+       ,@forms)))
+
+(defun org-moor-test--kept (url &optional title)
+  "Take URL at point, titled TITLE or as offered; return its record."
+  (org-moor-test--titles-as-given
+    (org-moor-record (org-moor-test--id-at
+                      (org-moor-take-url url (or title (org-moor-url-file-name url) "T"))))))
+
+(ert-deftest org-moor-test-take-url-with-snapshot ()
   (org-moor-test--with-notes "* Topic\n"
-    (let ((org-moor-snapshot-function
-           (lambda (_url file done) (with-temp-file file) (funcall done t))))
-      (org-moor-test--titles-as-given
-        (let* ((m (org-moor-take-url "https://example.com/" "Example"))
-               (record (org-moor-record (org-moor-test--id-at m))))
-          (should (equal (plist-get record :origin) "https://example.com/"))
-          (should (equal (plist-get record :via) "web"))
-          (should (equal (plist-get record :file) "page.html"))
-          (should (plist-get record :copy))
-          (should (string-match-p "\\[\\[moor:[^]]+\\]\\[Example\\]\\]" (buffer-string))))))))
+    (org-moor-test--serving "text/html" nil "<html>raw</html>"
+      (let ((org-moor-snapshot-function
+             (lambda (_url file done) (with-temp-file file (insert "whole")) (funcall done t))))
+        (org-moor-test--titles-as-given
+          (let* ((m (org-moor-take-url "https://example.com/" "Example"))
+                 (record (org-moor-record (org-moor-test--id-at m))))
+            (should (equal (plist-get record :origin) "https://example.com/"))
+            (should (equal (plist-get record :via) "web"))
+            (should (equal (plist-get record :file) "page.html"))
+            (should (equal (with-temp-buffer
+                             (insert-file-contents (plist-get record :copy))
+                             (buffer-string))
+                           "whole"))
+            (should (equal (directory-files (plist-get record :dir) nil "\\`[^.]")
+                           '("moor.org" "page.html")))
+            (should (string-match-p "\\[\\[moor:[^]]+\\]\\[Example\\]\\]" (buffer-string)))))))))
 
 (ert-deftest org-moor-test-move-or-copy ()
   (org-moor-test--with-notes "* Topic\n"
@@ -175,17 +200,128 @@ the copy, with its record, in the file's sources."
 
 (ert-deftest org-moor-test-take-url-downloads-a-file ()
   (org-moor-test--with-notes "* Topic\n"
-    (let (fetched)
-      (cl-letf (((symbol-function 'org-moor-download)
-                 (lambda (url file done) (setq fetched url)
-                   (with-temp-file file) (funcall done t))))
-        (org-moor-test--titles-as-given
-          (let ((record (org-moor-record (org-moor-test--id-at
-                                          (org-moor-take-url "https://x.com/rules.pdf")))))
-            (should (equal fetched "https://x.com/rules.pdf"))
-            (should (equal (plist-get record :title) "rules"))
-            (should (equal (plist-get record :file) "rules.pdf"))
-            (should (plist-get record :copy))))))))
+    (org-moor-test--serving "application/pdf" nil "%PDF-1.7"
+      (let ((record (org-moor-test--kept "https://x.com/rules.pdf")))
+        (should (equal fetched "https://x.com/rules.pdf"))
+        (should (equal (plist-get record :title) "rules.pdf"))
+        (should (equal (plist-get record :file) "rules.pdf"))
+        (should (plist-get record :copy))))))
+
+(ert-deftest org-moor-test-file-is-told-by-what-it-sends ()
+  (org-moor-test--with-notes "* Topic\n"
+    ;; Named by its type when its URL is spelled with none.
+    (org-moor-test--serving "application/pdf; charset=binary" nil "%PDF-1.7"
+      (should (equal (plist-get (org-moor-test--kept "https://arxiv.org/pdf/2401.00001") :file)
+                     "2401.00001.pdf")))
+    ;; Named as its Content-Disposition names it.
+    (org-moor-test--serving
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        "attachment; filename*=UTF-8''%E8%B3%87%E6%96%99.pptx" "PK"
+      (should (equal (plist-get (org-moor-test--kept "https://x.com/download?id=3") :file)
+                     "資料.pptx")))
+    ;; Sent with no type it says, it is known by its first bytes.
+    (org-moor-test--serving "application/octet-stream" nil "%PDF-1.4"
+      (should (equal (plist-get (org-moor-test--kept "https://x.com/get") :file)
+                     "get.pdf")))
+    ;; A page is a page, however it is spelled.
+    (org-moor-test--serving "text/html; charset=utf-8" nil "<html></html>"
+      (should (equal (plist-get (org-moor-test--kept "https://x.com/view.php?id=1") :file)
+                     "page.html")))))
+
+(ert-deftest org-moor-test-a-sign-in-page-is-not-the-file ()
+  (org-moor-test--with-notes "* Topic\n"
+    (org-moor-test--serving "text/html" nil "<!DOCTYPE html><html>Sign in</html>"
+      (let ((record (org-moor-test--kept "https://x.com/deck.pptx")))
+        (should-not (plist-get record :file))
+        (should (equal (directory-files (plist-get record :dir) nil "\\`[^.]")
+                       '("moor.org")))
+        (should-not (directory-files (plist-get record :dir) nil "\\`\\.fetch"))))))
+
+(ert-deftest org-moor-test-page-keeps-its-html-without-a-snapshot ()
+  (org-moor-test--with-notes "* Topic\n"
+    (org-moor-test--serving "text/html" nil "<html>raw</html>"
+      (let* ((org-moor-snapshot-function (lambda (_url _file done) (funcall done nil)))
+             (record (org-moor-test--kept "https://x.com/article")))
+        (should (equal (plist-get record :file) "page.html"))
+        (with-temp-buffer
+          (insert-file-contents (plist-get record :copy))
+          (should (equal (buffer-string) "<html>raw</html>")))))))
+
+(ert-deftest org-moor-test-url-unwrap ()
+  (should (equal (org-moor-url-unwrap
+                  "https://view.officeapps.live.com/op/view.aspx?src=https%3A%2F%2Fx.com%2F%E8%B3%87%E6%96%99.pptx&wdOrigin=BROWSELINK")
+                 "https://x.com/資料.pptx"))
+  (should (equal (org-moor-url-unwrap "https://x.com/share?url=https%3A%2F%2Fy.com%2Fpost")
+                 "https://x.com/share?url=https%3A%2F%2Fy.com%2Fpost")))
+
+(ert-deftest org-moor-test-disposition-name ()
+  (should (equal (org-moor--disposition-name "attachment; filename=\"a b.pdf\"") "a b.pdf"))
+  (should (equal (org-moor--disposition-name "inline; filename=a.pdf; size=3") "a.pdf"))
+  (should-not (org-moor--disposition-name "inline")))
+
+(ert-deftest org-moor-test-cookies-are-sent ()
+  (let* ((cookies (make-temp-file "cookies"))
+         (org-moor-cookie-file cookies)
+         commands)
+    (cl-letf (((symbol-function 'executable-find) #'identity)
+              ((symbol-function 'make-process)
+               (lambda (&rest args) (push (plist-get args :command) commands) nil)))
+      (org-moor--curl "https://x.com/" "/tmp/f" #'ignore)
+      (org-moor-snapshot-monolith "https://x.com/" "/tmp/p" #'ignore))
+    (should (equal (seq-take (cadr commands) 4) (list "curl" "-fsSL" "-b" cookies)))
+    (should (equal (seq-take (car commands) 4) (list "monolith" "-s" "-C" cookies)))
+    (setq org-moor-cookie-file nil commands nil)
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args) (push (plist-get args :command) commands) nil)))
+      (org-moor--curl "https://x.com/" "/tmp/f" #'ignore))
+    (should-not (member "-b" (car commands)))
+    (delete-file cookies)
+    (let ((org-moor-cookie-file cookies) said)
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+        (should-not (org-moor--cookie-args "-b")))
+      (should (string-match-p "no cookie file" said)))))
+
+(ert-deftest org-moor-test-a-copy-arriving ()
+  (let* ((downloads (make-temp-file "dl" t))
+         (into (make-temp-file "src" t))
+         (old (expand-file-name "old.pdf" downloads))
+         (org-moor-arriving-timeout 10)
+         got)
+    (with-temp-file old (insert "old"))
+    (set-file-times old (time-subtract nil 60))
+    (funcall (org-moor-arriving downloads (current-time)) "https://x" into
+             (lambda (name) (setq got (or name 'none))))
+    (with-temp-file (expand-file-name "deck.pptx.crdownload" downloads) (insert "half"))
+    (accept-process-output nil 1.2)
+    (should-not got)
+    (rename-file (expand-file-name "deck.pptx.crdownload" downloads)
+                 (expand-file-name "deck.pptx" downloads))
+    (while (not got) (accept-process-output nil 0.1))
+    (should (equal got "deck.pptx"))
+    (should (file-exists-p (expand-file-name "deck.pptx" into)))
+    (should (file-exists-p old))
+    (delete-directory downloads t)
+    (delete-directory into t)))
+
+(ert-deftest org-moor-test-opening-the-original-says-so ()
+  (let ((opened nil) (said nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (setq opened u)))
+              ((symbol-function 'message)
+               (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
+      (org-moor-open-record '(:id "x" :title "Deck" :origin "https://x.com/d"))
+      (should (equal opened "https://x.com/d"))
+      (should (string-match-p "opened the original" said)))))
+
+(ert-deftest org-moor-test-protocol-file-url-is-a-file ()
+  (let (args)
+    (cl-letf (((symbol-function 'org-moor-take-file)
+               (lambda (&rest a) (setq args a)))
+              ((symbol-function 'select-frame-set-input-focus) #'ignore))
+      (org-moor-protocol '(:url "file:///C:/Users/me/%E8%B3%87%E6%96%99%20v2.pdf"))
+      (should (equal (car args) "C:/Users/me/資料 v2.pdf"))
+      (org-moor-protocol '(:url "file:///home/me/a.pdf"))
+      (should (equal (car args) "/home/me/a.pdf")))))
 
 (ert-deftest org-moor-test-protocol-path-keeps-origin ()
   (let (args)

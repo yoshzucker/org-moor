@@ -55,7 +55,8 @@ Programs it calls when they are there, and does without when not:
 
 | Program     | For                                                   |
 |-------------+-------------------------------------------------------|
-| ~monolith~  | keeping a web page as one HTML file                   |
+| ~monolith~  | keeping a web page as one HTML file, with its images  |
+| ~curl~      | downloading a file, or a page's HTML without monolith |
 | ~pandoc~    | making HTML, Word, PowerPoint, EPUB readable as text  |
 
 For a browser, ~script/org-moor-bookmarklet.txt~ is a bookmarklet that
@@ -71,7 +72,31 @@ Each asks the app what it has open and sends it through org-protocol.
 On Windows, a PowerPoint or Excel document opened from the web is saved as
 a copy by the app itself, which is taken with its URL as the origin; a
 Word document from the web, which cannot be copied that way, is taken as
-its URL.
+its URL.  A file open in a browser is taken as the file: one on disk by
+its path, and one in SharePoint or OneDrive -- PowerPoint for the web, a
+PDF in its viewer -- by having the browser, which is signed in, download
+it; Emacs asks for the title meanwhile, and takes the file from the
+Downloads folder once it is whole, its URL kept as the origin.
+
+What a URL is, Emacs tells by what it sends, not by how it is spelled: a
+page is kept as a page, and a file -- a PDF behind ~/download?id=3~ --
+under the name the server gives it, else its URL's, with the extension
+its type has.  A page sent where a file was asked for, as a sign-in page
+is, is not kept.
+
+A page behind a sign-in -- a wiki, Confluence -- is fetched as you when
+~org-moor-cookie-file~ holds your browser's cookies, written out in the
+cookies.txt format by a browser extension; curl and monolith are both
+given them.  Cookies run out, so the file is to be written again now and
+then, and kept where only you can read it, since it is your sign-in.
+On Windows, the script asks the browser itself to download what some
+sites keep behind a sign-in -- a file in SharePoint, a Confluence page as
+a PDF -- by a table of URL patterns at its top, which a new site is added
+to as a row.
+
+Following a link opens the source's copy.  When there is none -- it is
+still arriving, or could not be kept -- the original is opened, and the
+echo area says so, so that you know it is not a copy you are in.
 
 The settings most worth giving:
 

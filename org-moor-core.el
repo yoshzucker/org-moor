@@ -91,6 +91,13 @@ Its own, or, in a copy of a heading taken out by org-dock, the heading's."
                      'org-moor-sources-directory-functions file))
           org-moor-sources-directory)))))
 
+(defun org-moor--dir-id (dir)
+  "Return the id of the source whose directory is DIR, or nil.
+Read back from its name, as `org-moor-source-directory' makes it."
+  (let* ((dir (directory-file-name dir))
+         (two (file-name-nondirectory (directory-file-name (file-name-directory dir)))))
+    (and (= (length two) 2) (concat two (file-name-nondirectory dir)))))
+
 (defun org-moor-source-directory (id &optional sources)
   "Return the directory of source ID in SOURCES, by default this buffer's.
 The id's first two characters name a directory and the rest one below
@@ -139,12 +146,16 @@ another is, still finds its source on a machine that has both."
   (or (org-moor-record id)
       (org-moor-record id org-moor-sources-directory)))
 
+(defun org-moor--property-line (name value)
+  "Return the record's property line of NAME holding VALUE, without newline."
+  (format "%-13s %s" (concat ":" name ":") value))
+
 (defun org-moor--record-text (record)
   "Return the text of a record file for RECORD."
   (concat ":PROPERTIES:\n"
           (mapconcat (pcase-lambda (`(,key . ,name))
                        (when-let* ((value (plist-get record key)))
-                         (format "%-13s %s\n" (concat ":" name ":") value)))
+                         (concat (org-moor--property-line name value) "\n")))
                      org-moor--record-keys "")
           ":END:\n"
           "#+title: " (or (plist-get record :title) "") "\n"))
@@ -187,13 +198,13 @@ written, so that anything else written in the record stays."
         (let ((name (or (alist-get key org-moor--record-keys)
                         (error "org-moor: not a key of a record: %S" key))))
           (if (re-search-forward (concat "^[ \t]*:" name ":.*$") nil t)
-              (replace-match (format "%-13s %s" (concat ":" name ":") value) t t)
+              (replace-match (org-moor--property-line name value) t t)
             (if (re-search-forward "^[ \t]*:END:" nil t)
                 (progn (beginning-of-line)
-                       (insert (format "%-13s %s\n" (concat ":" name ":") value)))
+                       (insert (org-moor--property-line name value) "\n"))
               (goto-char (point-min))
               (insert ":PROPERTIES:\n"
-                      (format "%-13s %s\n" (concat ":" name ":") value)
+                      (org-moor--property-line name value) "\n"
                       ":END:\n")))))
       (let ((coding-system-for-write 'utf-8-unix))
         (write-region nil nil file nil 'silent))))
@@ -217,6 +228,10 @@ to search for, as links written before lines were used have, or nil."
                 place)))
     (error "org-moor: not a moor link: %s" path)))
 
+(defun org-moor-extension (file)
+  "Return FILE's extension, lower case, or \"\" when it has none."
+  (downcase (or (file-name-extension file) "")))
+
 (defcustom org-moor-text-extensions
   '("txt" "md" "markdown" "org" "csv" "tsv" "json" "yaml" "yml" "rst" "tex" "log")
   "Extensions of copies Emacs reads as text, where a place is a line."
@@ -225,11 +240,11 @@ to search for, as links written before lines were used have, or nil."
 
 (defun org-moor-text-file-p (file)
   "Return non-nil when FILE is read as text; see `org-moor-text-extensions'."
-  (member (downcase (or (file-name-extension file) "")) org-moor-text-extensions))
+  (member (org-moor-extension file) org-moor-text-extensions))
 
 (defun org-moor-pdf-p (file)
   "Return non-nil when FILE is a PDF, where a place is a page."
-  (string-match-p "\\.pdf\\'" (downcase file)))
+  (equal (org-moor-extension file) "pdf"))
 
 (defun org-moor-text-regexp (text)
   "Return a regexp finding TEXT however its whitespace is broken."
@@ -287,13 +302,12 @@ Made once, and again only when FILE is newer; it goes with the copy."
 
 (defun org-moor-readable (copy)
   "Return the file an agent reads for COPY."
-  (let ((fn (cdr (assoc (downcase (or (file-name-extension copy) ""))
-                        org-moor-readable-converters))))
+  (let ((fn (cdr (assoc (org-moor-extension copy) org-moor-readable-converters))))
     (if fn (funcall fn copy) copy)))
 
 (defun org-moor--made-readable (copy)
   "Return the file COPY was made readable as, if it was, or nil."
-  (and (assoc (downcase (or (file-name-extension copy) "")) org-moor-readable-converters)
+  (and (assoc (org-moor-extension copy) org-moor-readable-converters)
        (let ((md (concat copy ".md")))
          (and (file-exists-p md) md))))
 
@@ -353,7 +367,7 @@ Where what is noted from it is written; see `org-moor-insert-place'.")
            (point-marker)))))
 
 (defun org-moor-open-record (record &optional place from)
-  "Open the copy of RECORD at PLACE, or else its origin.
+  "Open the copy of RECORD at PLACE, or else its origin, saying so.
 FROM, a marker at a heading, is kept in the copy's buffer as the heading
 it is read for."
   (cond
@@ -363,7 +377,13 @@ it is read for."
                            (file-truename (plist-get record :copy))))
       (setq org-moor--read-for from)))
    ((plist-get record :origin)
-    (org-moor-open-origin (plist-get record :origin)))
+    (org-moor-open-origin (plist-get record :origin))
+    ;; Said last, so that nothing said in opening hides it: what is open
+    ;; now is the original, not a copy that can come to no harm.
+    (message "%s" (propertize
+                   (format "org-moor: no copy of %s; opened the original: %s"
+                           (plist-get record :title) (plist-get record :origin))
+                   'face 'warning)))
    (t (user-error "org-moor: %s has neither copy nor origin" (plist-get record :id)))))
 
 (defun org-moor-link-follow (path _arg)

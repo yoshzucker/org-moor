@@ -51,12 +51,8 @@ Read from where FILE lies: in a source's directory, beside its record,
 two levels below whichever sources directory that is.  What a copy was
 made readable as lies there too, and is the same source's."
   (let* ((dir (file-name-directory (file-truename file)))
-         (above (file-name-directory (directory-file-name dir)))
-         (two (file-name-nondirectory (directory-file-name above))))
-    (when (and (= (length two) 2)
-               (file-exists-p (expand-file-name org-moor-record-file dir)))
-      (org-moor--record-in dir (concat two (file-name-nondirectory
-                                            (directory-file-name dir)))))))
+         (id (org-moor--dir-id dir)))
+    (and id (org-moor--record-in dir id))))
 
 (defun org-moor-current-page ()
   "Return the page shown in this buffer, or nil."
@@ -96,14 +92,8 @@ KIND is `page' or `line', what PLACE is; nil PLACE links to the source."
 
 (defun org-moor-headings-linking (id)
   "Return markers at the headings that link to source ID.
-In the files of `org-moor-files-function' and the Org files open."
-  (let ((files (delete-dups
-                (append (funcall org-moor-files-function)
-                        (delq nil (mapcar (lambda (b)
-                                            (with-current-buffer b
-                                              (and (derived-mode-p 'org-mode)
-                                                   buffer-file-name)))
-                                          (buffer-list))))))
+In the files of `org-moor-searched-files'."
+  (let ((files (org-moor-searched-files))
         (re (concat "\\[\\[moor:" (regexp-quote id) "\\(?:::\\|\\]\\)"))
         found)
     (dolist (file files)
@@ -123,25 +113,12 @@ In the files of `org-moor-files-function' and the Org files open."
 
 (defun org-moor--choose-heading (markers)
   "Return one of MARKERS at headings, asking when there is more than one."
-  (if (cdr markers)
-      (let ((table (mapcar (lambda (m)
-                             (cons (org-with-point-at m
-                                     (concat (file-name-nondirectory (buffer-file-name))
-                                             ": " (org-format-outline-path
-                                                   (org-get-outline-path t) 1000)))
-                                   m))
-                           markers)))
-        (cdr (assoc (completing-read "Note in: " table nil t) table)))
-    (car markers)))
-
-(defun org-moor--end-of-own-text (pos)
-  "Return the end of the text of the heading at POS, before its first child."
-  (save-excursion
-    (goto-char pos)
-    (org-back-to-heading t)
-    (outline-next-heading)
-    (skip-chars-backward " \t\n")
-    (point)))
+  (org-moor-choose markers
+                   (lambda (m)
+                     (org-with-point-at m
+                       (concat (file-name-nondirectory (buffer-file-name))
+                               ": " (org-format-outline-path (org-get-outline-path t) 1000))))
+                   "Note in: "))
 
 (defun org-moor--dock-for (marker)
   "Return the buffer the heading at MARKER is written in, taken out.
@@ -159,9 +136,7 @@ Its point as shown, when it is shown, and the window's point follows."
   (let ((window (get-buffer-window buffer t)))
     (with-current-buffer buffer
       (when window (goto-char (window-point window)))
-      (unless (bolp)
-        (end-of-line)
-        (if (eobp) (insert "\n") (forward-char 1)))
+      (org-moor--next-line)
       (insert text)
       (unless (bolp) (insert "\n"))
       (when window (set-window-point window (point))))))
@@ -225,14 +200,10 @@ is taken first.  In an org-noter session, `org-noter-insert-note' instead."
 
 (defun org-moor--choose-record (records)
   "Return one of RECORDS, asking when there is more than one."
-  (if (cdr records)
-      (let ((table (mapcar (lambda (r)
-                             (cons (format "%s  %s" (or (plist-get r :title) "")
-                                           (substring (plist-get r :id) 0 8))
-                                   r))
-                           records)))
-        (cdr (assoc (completing-read "Source: " table nil t) table)))
-    (car records)))
+  (org-moor-choose records
+                   (lambda (r) (format "%s  %s" (or (plist-get r :title) "")
+                                       (substring (plist-get r :id) 0 8)))
+                   "Source: "))
 
 (defun org-moor--record-here ()
   "Return the source of the link at point, or one the heading links to.
@@ -258,8 +229,6 @@ With ORIGIN (\\[universal-argument]), open where it came from instead."
     (if origin
         (org-moor-open-origin (or (plist-get record :origin)
                                   (user-error "org-moor: no origin")))
-      (unless (plist-get record :copy)
-        (message "org-moor: no copy; opening the origin"))
       (org-moor-open-record record nil (org-moor--heading-marker)))))
 
 ;;;; A source's title

@@ -44,6 +44,24 @@ Not those in `org-moor-sources-directory': a source's record is no note."
                       (not (string-prefix-p
                             sources (file-name-as-directory (expand-file-name dir))))))))))))
 
+(defun org-moor-searched-files ()
+  "Return the Org files searched for links: those of
+`org-moor-files-function', and those open."
+  (delete-dups
+   (append (funcall org-moor-files-function)
+           (delq nil (mapcar (lambda (b)
+                               (with-current-buffer b
+                                 (and (derived-mode-p 'org-mode) buffer-file-name)))
+                             (buffer-list))))))
+
+(defun org-moor-choose (items describe prompt)
+  "Return one of ITEMS, asking with PROMPT when there is more than one.
+DESCRIBE gives the string an item is chosen by."
+  (if (cdr items)
+      (let ((table (mapcar (lambda (item) (cons (funcall describe item) item)) items)))
+        (cdr (assoc (completing-read prompt table nil t) table)))
+    (car items)))
+
 (defconst org-moor--taken-re
   (concat "^[ \t]*#\\+begin_quote[ \t]+\\(.+\\)$"
           "\\|\\[\\[moor:\\([^]:\n]+\\)")

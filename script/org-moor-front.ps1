@@ -13,6 +13,22 @@
   The app itself can: it is asked to save a copy, which is what is taken,
   with the URL kept as where it came from.
 
+  A file opened in a browser is taken as a file: one on disk by its path,
+  and one behind a sign-in -- PowerPoint or Word for the web, a PDF in
+  SharePoint's viewer, a Confluence page as a PDF; see $BrowserDownloads --
+  by having the browser, which is signed in, download it.  Emacs is not kept waiting for that: it is told the download is
+  arriving in the Downloads folder, and takes it from there once whole,
+  with its URL kept as where it came from.  Any other URL Emacs fetches
+  itself.
+
+  From a hotkey, start it without a profile, which is quickest, and give
+  it the window in front, read before PowerShell starts so that its
+  console is never what is read.  With AutoHotkey:
+
+    ^!m:: Run('powershell.exe -NoProfile -ExecutionPolicy Bypass '
+              . '-WindowStyle Hidden -File "org-moor-front.ps1" -Hwnd '
+              . WinExist("A"), , "Hide")
+
   The URL is handed to emacsclientw directly: $env:EMACSCLIENT, else the
   one on PATH.  A Scoop shim on PATH is followed to the program it stands
   for, since a shim is a console program and would show a window.  Only
@@ -20,25 +36,33 @@
   Windows, which then needs the scheme registered.
 
 .PARAMETER Hwnd
-  Window to read.  Without it, the foreground window.
+  Window to read.  Without it, the window holding the keyboard focus.
 #>
 param([long]$Hwnd = 0)
 $ErrorActionPreference = 'SilentlyContinue'
 
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class OrgMoorWin {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-}
-"@
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$AE = [System.Windows.Automation.AutomationElement]
 
-$handle = if ($Hwnd -ne 0) { [IntPtr]$Hwnd } else { [OrgMoorWin]::GetForegroundWindow() }
-if ($handle -eq [IntPtr]::Zero) { exit 0 }
-$procId = 0
-[void][OrgMoorWin]::GetWindowThreadProcessId($handle, [ref]$procId)
-$proc = Get-Process -Id $procId
+# The window in front is the one holding the keyboard focus, found through
+# UI Automation, which is loaded anyway: asking Windows directly would need
+# C# compiled on every run, which is most of a second.
+function Get-FrontWindow {
+  $e = $AE::FocusedElement
+  if (-not $e) { return $null }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  while ($true) {
+    $parent = $walker.GetParent($e)
+    if (-not $parent -or [System.Windows.Automation.Automation]::Compare($parent, $AE::RootElement)) { break }
+    $e = $parent
+  }
+  return $e
+}
+
+$window = if ($Hwnd -ne 0) { $AE::FromHandle([IntPtr]$Hwnd) } else { Get-FrontWindow }
+if (-not $window) { exit 0 }
+$handle = [IntPtr]$window.Current.NativeWindowHandle
+$proc = Get-Process -Id $window.Current.ProcessId
 $exe = $proc.ProcessName
 
 $copies = Join-Path $env:TEMP 'org-moor'
@@ -58,23 +82,69 @@ function Get-UrlFileName($url) {
   return [uri]::UnescapeDataString(($path -split '/')[-1])
 }
 
-function Get-BrowserUrl($h) {
-  Add-Type -AssemblyName UIAutomationClient
-  Add-Type -AssemblyName UIAutomationTypes
-  $root = [System.Windows.Automation.AutomationElement]::FromHandle($h)
-  if (-not $root) { return '' }
+function Get-AddressValue($e) {
+  $v = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+  if (-not $v) { return '' }
+  $s = $v.Current.Value
+  if ($s -match '^(https?|file)://') { return $s }
+  if ($s -match '^[A-Za-z]:[\\/]') { return 'file:///' + $s }
+  if ($s -match '^[\w.-]+\.[a-z]{2,}(/|$)') { return 'https://' + $s }
+  return ''
+}
+
+# The address bar is the first text field in the window, ahead of the
+# page; the page is searched only when it is not, since a page as large as
+# PowerPoint for the web takes seconds to search.
+function Get-BrowserUrl($root) {
   $cond = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::Edit)
+    $AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+  $first = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+  if ($first) {
+    $url = Get-AddressValue $first
+    if ($url) { return $url }
+  }
   foreach ($e in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
-    $v = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-    if ($v -and $v.Current.Value -match '^https?://') { return $v.Current.Value }
-    if ($v -and $v.Current.Value -match '^[\w.-]+\.[a-z]{2,}(/|$)') { return 'https://' + $v.Current.Value }
+    $url = Get-AddressValue $e
+    if ($url) { return $url }
   }
   return ''
 }
 
-$path = ''; $url = ''; $origin = ''; $title = $proc.MainWindowTitle
+function Get-FileUrlPath($url) {
+  $p = [uri]::UnescapeDataString(($url -replace '^file:(//[^/]*)?', ''))
+  if ($p -match '^/[A-Za-z]:') { $p = $p.Substring(1) }
+  return $p -replace '/', '\'
+}
+
+# Sites where a page or a file is behind a sign-in, which only the browser
+# has: for a URL matching Match, the browser downloads Download, and Emacs
+# takes what arrives.  {name} in Download is the group of that name in
+# Match.  A row is all a new site needs.
+$BrowserDownloads = @(
+  # PowerPoint, Word or Excel for the web, showing a file by its id.
+  @{ Match = '^https://(?<host>[^/]+\.sharepoint\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]sourcedoc=(%7B|\{)?(?<id>[0-9a-fA-F-]{36})'
+     Download = 'https://{host}{site}/_layouts/15/download.aspx?UniqueId={id}' },
+  # A library's viewer -- a PDF, say -- showing a file by its path.
+  @{ Match = '^https://(?<host>[^/]+\.sharepoint\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]id=(?<path>[^&#]+\.\w+)(&|#|$)'
+     Download = 'https://{host}{site}/_layouts/15/download.aspx?SourceUrl={path}' },
+  # A Confluence Cloud page, as a PDF.
+  @{ Match = '^https://(?<host>[^/]+\.atlassian\.net)/wiki/(spaces/[^/]+/pages/(edit-v2/)?|.*[?&]pageId=)(?<id>\d+)'
+     Download = 'https://{host}/wiki/spaces/flyingpdf/pdfpageexport.action?pageId={id}' }
+)
+
+function Get-BrowserDownload($url) {
+  foreach ($row in $BrowserDownloads) {
+    if ($url -match $row.Match) {
+      $groups = $Matches.Clone()
+      return [regex]::Replace($row.Download, '\{(\w+)\}',
+        { param($m) [string]$groups[$m.Groups[1].Value] })
+    }
+  }
+  return ''
+}
+
+$path = ''; $url = ''; $origin = ''; $arriving = ''; $since = ''
+$title = $window.Current.Name
 
 switch -Regex ($exe) {
   '^(POWERPNT|WINWORD|EXCEL)$' {
@@ -110,8 +180,20 @@ switch -Regex ($exe) {
     }
   }
   '^(msedge|chrome|brave|firefox|zen)$' {
-    $url = Get-BrowserUrl $handle
+    $url = Get-BrowserUrl $window
     $title = $title -replace ' - (Microsoft.? Edge|Google Chrome|Brave)$', '' -replace ' - [^-]*Microsoft.? Edge$', '' -replace ' [-\u2014] (Mozilla Firefox|Zen( Browser)?)$', ''
+    $title = $title -replace '\.(pptx?|docx?|xlsx?|pdf)$', '' -replace ' - Confluence$', ''
+    if ($url -match '^file:') {
+      $path = Get-FileUrlPath $url; $url = ''; $title = ''
+    } elseif ($url) {
+      $download = Get-BrowserDownload $url
+      if ($download) {
+        $arriving = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
+        if (-not $arriving) { $arriving = Join-Path $env:USERPROFILE 'Downloads' }
+        $since = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        Start-Process -FilePath $proc.Path -ArgumentList $download
+      }
+    }
   }
 }
 
@@ -119,6 +201,7 @@ if (-not $path -and -not $url) { exit 0 }
 
 $q = if ($path) { 'path=' + [uri]::EscapeDataString($path) } else { 'url=' + [uri]::EscapeDataString($url) }
 if ($origin) { $q += '&origin=' + [uri]::EscapeDataString($origin) }
+if ($arriving) { $q += '&arriving=' + [uri]::EscapeDataString($arriving) + '&since=' + $since }
 if ($title) { $q += '&title=' + [uri]::EscapeDataString($title) }
 $protocolUrl = 'org-protocol://moor?' + $q
 
