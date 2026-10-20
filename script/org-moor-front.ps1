@@ -15,11 +15,25 @@
 
   A file opened in a browser is taken as a file: one on disk by its path,
   and one behind a sign-in -- PowerPoint or Word for the web, a PDF in
-  SharePoint's viewer, a Confluence page as a PDF; see $BrowserDownloads --
-  by having the browser, which is signed in, download it.  Emacs is not kept waiting for that: it is told the download is
-  arriving in the Downloads folder, and takes it from there once whole,
-  with its URL kept as where it came from.  Any other URL Emacs fetches
-  itself.
+  SharePoint's viewer, a Confluence page as a PDF, a page only SingleFile
+  can keep -- by having the browser, which is signed in, keep it: it is
+  sent to a URL that downloads it, or sent the keys of an extension that
+  saves the page.  Emacs is not kept waiting for that: it is told the
+  file is arriving in the Downloads folder, and takes it from there once
+  whole, with its URL kept as where it came from.  Any other URL Emacs
+  fetches itself.
+
+  Which sites those are is the configuration's, a JSON file at
+  ~/.config/org-moor/front.json ($env:XDG_CONFIG_HOME when set): a row
+  each, its match a regular expression for the URL, and either download,
+  the URL to send the browser to, {name} in it the group of that name in
+  match, or keys, what to type in the browser, in SendKeys' notation --
+  ^+y is Ctrl+Shift+Y.  Without it, org-moor-front.json beside this
+  script is read, which is also the template:
+
+    org-moor-front.ps1 -WriteConfig
+
+  writes it there to be changed, and leaves one already there alone.
 
   From a hotkey, start it without a profile, which is quickest, and give
   it the window in front, read before PowerShell starts so that its
@@ -38,8 +52,24 @@
 .PARAMETER Hwnd
   Window to read.  Without it, the window holding the keyboard focus.
 #>
-param([long]$Hwnd = 0)
+param([long]$Hwnd = 0, [switch]$WriteConfig)
 $ErrorActionPreference = 'SilentlyContinue'
+
+$ConfigHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$ConfigFile = Join-Path (Join-Path $ConfigHome 'org-moor') 'front.json'
+$ConfigTemplate = Join-Path $PSScriptRoot 'org-moor-front.json'
+
+if ($WriteConfig) {
+  $ErrorActionPreference = 'Stop'
+  if (Test-Path -LiteralPath $ConfigFile) {
+    Write-Output "Already there, left as it is: $ConfigFile"
+  } else {
+    New-Item -ItemType Directory -Force -Path (Split-Path $ConfigFile) | Out-Null
+    Copy-Item -LiteralPath $ConfigTemplate -Destination $ConfigFile
+    Write-Output "Written: $ConfigFile"
+  }
+  exit 0
+}
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $AE = [System.Windows.Automation.AutomationElement]
@@ -138,30 +168,31 @@ function Get-FileUrlPath($url) {
 }
 
 # Sites where a page or a file is behind a sign-in, which only the browser
-# has: for a URL matching Match, the browser downloads Download, and Emacs
-# takes what arrives.  {name} in Download is the group of that name in
-# Match.  A row is all a new site needs.
-$BrowserDownloads = @(
-  # PowerPoint, Word or Excel for the web, showing a file by its id.
-  @{ Match = '^https://(?<host>[^/]+\.sharepoint\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]sourcedoc=(%7B|\{)?(?<id>[0-9a-fA-F-]{36})'
-     Download = 'https://{host}{site}/_layouts/15/download.aspx?UniqueId={id}' },
-  # A library's viewer -- a PDF, say -- showing a file by its path.
-  @{ Match = '^https://(?<host>[^/]+\.sharepoint\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]id=(?<path>[^&#]+(\.|%2[Ee])\w+)(&|#|$)'
-     Download = 'https://{host}{site}/_layouts/15/download.aspx?SourceUrl={path}' },
-  # A Confluence Cloud page, as a PDF.
-  @{ Match = '^https://(?<host>[^/]+\.atlassian\.net)/wiki/(spaces/[^/]+/pages/(edit-v2/)?|.*[?&]pageId=)(?<id>\d+)'
-     Download = 'https://{host}/wiki/spaces/flyingpdf/pdfpageexport.action?pageId={id}' }
-)
+# has, are rows of $ConfigFile; see Read-Sites.
+function Read-Sites {
+  $file = if (Test-Path -LiteralPath $ConfigFile) { $ConfigFile } else { $ConfigTemplate }
+  try {
+    $config = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+    return @($config.sites)
+  } catch { return @() }
+}
 
-function Get-BrowserDownload($url) {
-  foreach ($row in $BrowserDownloads) {
-    if ($url -match $row.Match) {
+# For a URL matching a row's match, the browser is made to keep it: it is
+# sent to the row's download, {name} there being the group of that name in
+# match, or sent the row's keys -- SingleFile's shortcut, say -- in the
+# window in front.  Return the row, its download filled in, or $null.
+function Get-BrowserKeep($url) {
+  foreach ($row in Read-Sites) {
+    if ($row.match -and $url -match $row.match) {
       $groups = $Matches.Clone()
-      return [regex]::Replace($row.Download, '\{(\w+)\}',
-        { param($m) [string]$groups[$m.Groups[1].Value] })
+      $download = if ($row.download) {
+        [regex]::Replace($row.download, '\{(\w+)\}',
+          { param($m) [string]$groups[$m.Groups[1].Value] })
+      } else { '' }
+      return @{ Download = $download; Keys = [string]$row.keys }
     }
   }
-  return ''
+  return $null
 }
 
 $path = ''; $url = ''; $origin = ''; $arriving = ''; $since = ''
@@ -211,12 +242,19 @@ switch -Regex ($exe) {
     if ($url -match '^file:') {
       $path = Get-FileUrlPath $url; $url = ''; $title = ''
     } elseif ($url) {
-      $download = Get-BrowserDownload $url
-      if ($download) {
+      $keep = Get-BrowserKeep $url
+      if ($keep -and ($keep.Download -or $keep.Keys)) {
         $arriving = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
         if (-not $arriving) { $arriving = Join-Path $env:USERPROFILE 'Downloads' }
         $since = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        Start-Process -FilePath $proc.Path -ArgumentList $download
+        if ($keep.Download) {
+          Start-Process -FilePath $proc.Path -ArgumentList $keep.Download
+        } else {
+          $wsh = New-Object -ComObject WScript.Shell
+          [void]$wsh.AppActivate($proc.Id)
+          Start-Sleep -Milliseconds 150
+          $wsh.SendKeys($keep.Keys)
+        }
       }
     }
   }

@@ -816,14 +816,6 @@ the source named by its title, [[moor:ID][TITLE]]."
 
 ;;;; org-protocol
 
-(defun org-moor--file-url-path (url)
-  "Return the file a file: URL names: file:///C:/a%20b.pdf is C:/a b.pdf."
-  (let ((path (decode-coding-string
-               (url-unhex-string (replace-regexp-in-string
-                                  "\\`file:\\(//[^/]*\\)?" "" url))
-               'utf-8)))
-    (if (string-match-p "\\`/[A-Za-z]:" path) (substring path 1) path)))
-
 ;;;###autoload (autoload 'org-moor-protocol "org-moor" nil nil)
 (defun org-moor-protocol (info)
   "org-protocol handler.  INFO is a plist from the protocol URL.
@@ -846,7 +838,7 @@ and Emacs is brought to the front to ask."
         (title (plist-get info :title)))
     ;; A file opened in a browser has a file: URL, and is a file on disk.
     (when (and url (string-match "\\`file:" url))
-      (setq path (org-moor--file-url-path url) url nil))
+      (setq path (org-moor-file-url-path url) url nil))
     (cond
      (path
       (let ((org-moor--default-title title))

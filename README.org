@@ -89,12 +89,20 @@ A page behind a sign-in -- a wiki, Confluence -- is fetched as you when
 cookies.txt format by a browser extension; curl and monolith are both
 given them.  Cookies run out, so the file is to be written again now and
 then, and kept where only you can read it, since it is your sign-in.
-On Windows, the script asks the browser itself to download what some
-sites keep behind a sign-in -- a file in SharePoint, a Confluence page as
-a PDF -- by a table of URL patterns at its top, which a new site is added
-to as a row.
+On Windows, the script asks the browser itself to keep what some sites
+keep behind a sign-in -- a file in SharePoint, a Confluence page as a
+PDF, a page that only an extension such as SingleFile saves whole -- by
+sending it to a URL that downloads it, or typing the extension's
+shortcut; the copy is taken from the Downloads folder once it is there.
+Which sites those are is a table of URL patterns in
+~~/.config/org-moor/front.json~, a row each.  ~script/org-moor-front.json~
+is read while there is none, and is its template:
+~org-moor-front.ps1 -WriteConfig~ writes it there to be changed.
 
-Following a link opens the source's copy.  When there is none -- it is
+Following a link opens the source's copy.  A page, kept as HTML, is
+read in EWW, where a place is a text to find rather than a line, since
+its lines are only how it was drawn; ~C-u C-u M-x org-moor-open-source~
+opens it in the browser instead.  When there is none -- it is
 still arriving, or could not be kept -- the original is opened, and the
 echo area says so, so that you know it is not a copy you are in.
 
@@ -117,7 +125,7 @@ The settings most worth giving:
 | ~org-moor-noter~          | read a source beside its heading; ~i~ notes, ~q~ is done  |
 | ~org-moor-insert-place~   | note the place being read, in the heading it is read for  |
 | ~org-moor-jump~           | back to any heading something was taken to                |
-| ~org-moor-open-source~    | open a source's copy, or its origin                       |
+| ~org-moor-open-source~    | open a source's copy, its origin, or the copy outside     |
 | ~org-moor-set-title~      | give a source another title                               |
 | ~org-moor-set-origin~     | give the sources in the region (or at point) an origin    |
 | ~org-moor-sweep~          | what piled up, as one Dired buffer, newest first          |

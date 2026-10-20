@@ -35,6 +35,7 @@
 (require 'subr-x)
 (require 'cl-lib)
 (require 'seq)
+(require 'url-util)
 (require 'org-dock)
 
 (defgroup org-moor nil
@@ -259,6 +260,39 @@ to search for, as links written before lines were used have, or nil."
   "Return non-nil when FILE is a PDF, where a place is a page."
   (equal (org-moor-extension file) "pdf"))
 
+(defcustom org-moor-eww-extensions '("html" "htm")
+  "Extensions of copies read in EWW, where a place is a text.
+A copy whose extension is not here is opened as `org-moor-open-function'
+says; nil leaves HTML to it too."
+  :type '(repeat string)
+  :group 'org-moor)
+
+(defun org-moor-eww-p (file)
+  "Return non-nil when FILE is read in EWW; see `org-moor-eww-extensions'."
+  (member (org-moor-extension file) org-moor-eww-extensions))
+
+(defun org-moor-readable-here-p (file)
+  "Return non-nil when FILE is shown in Emacs, where a place can be sought."
+  (or (org-moor-text-file-p file) (org-moor-pdf-p file) (org-moor-eww-p file)))
+
+(defun org-moor-file-url-path (url)
+  "Return the file a file: URL names: file:///C:/a%20b.pdf is C:/a b.pdf."
+  (let ((path (decode-coding-string
+               (url-unhex-string (replace-regexp-in-string
+                                  "\\`file:\\(//[^/]*\\)?" "" url))
+               'utf-8)))
+    (if (string-match-p "\\`/[A-Za-z]:" path) (substring path 1) path)))
+
+(defvar eww-data)
+
+(defun org-moor-shown-file ()
+  "Return the file this buffer shows: the file visited, or what EWW shows."
+  (or buffer-file-name
+      (and (derived-mode-p 'eww-mode)
+           (let ((url (plist-get eww-data :url)))
+             (and url (string-prefix-p "file:" url)
+                  (org-moor-file-url-path url))))))
+
 (defun org-moor-text-regexp (text)
   "Return a regexp finding TEXT however its whitespace is broken."
   (mapconcat #'regexp-quote (split-string text "[ \t\n]+" t) "[ \t\n]+"))
@@ -335,10 +369,24 @@ in a copy read as text."
   :type '(choice (const :tag "org-open-file" nil) function)
   :group 'org-moor)
 
-(defun org-moor-open-copy (file &optional place)
+(defun org-moor--eww-open (file then)
+  "Show FILE in EWW, and call THEN in its buffer once it is drawn.
+EWW draws a file when it has read it, which may be later; what is set in
+the buffer before then is lost when it is drawn."
+  (let (hook)
+    (setq hook (lambda ()
+                 (when (equal (org-moor-shown-file) (expand-file-name file))
+                   (remove-hook 'eww-after-render-hook hook)
+                   (when then (funcall then)))))
+    (add-hook 'eww-after-render-hook hook)
+    (eww-open-file file)))
+
+(defun org-moor-open-copy (file &optional place then)
   "Open FILE, at PLACE when there is one and Emacs can show it.
 PLACE is a page of a PDF; a line of a copy read as text, or of what a
-copy was made readable as, where an agent read it; or a text to find."
+copy was made readable as, where an agent read it; or a text to find.
+THEN, when given, is called in the buffer that shows FILE, once it is
+shown; not when FILE is opened outside Emacs."
   (let ((readable (and (integerp place) (not (org-moor-pdf-p file))
                        (not (org-moor-text-file-p file))
                        (org-moor--made-readable file))))
@@ -348,16 +396,38 @@ copy was made readable as, where an agent read it; or a text to find."
       (cond ((and (derived-mode-p 'pdf-view-mode) (fboundp 'pdf-view-goto-page))
              (pdf-view-goto-page place))
             ((and (derived-mode-p 'doc-view-mode) (fboundp 'doc-view-goto-page))
-             (doc-view-goto-page place))))
+             (doc-view-goto-page place)))
+      (when then (funcall then)))
      ((and (integerp place) (or (org-moor-text-file-p file) readable))
       (find-file (or readable file))
       (goto-char (point-min))
       (forward-line (1- place))
-      (recenter))
+      (recenter)
+      (when then (funcall then)))
      ((and (stringp place) (org-moor-text-file-p file))
       (find-file file)
-      (org-moor-goto-text place))
-     (t (funcall (or org-moor-open-function #'org-open-file) file)))))
+      (org-moor-goto-text place)
+      (when then (funcall then)))
+     ((org-moor-eww-p file)
+      (org-moor--eww-open file (lambda ()
+                                 (when (stringp place) (org-moor-goto-text place))
+                                 (when then (funcall then)))))
+     ((org-moor-readable-here-p file)
+      (find-file file)
+      (when then (funcall then)))
+     (t (funcall (or org-moor-open-function #'org-open-file) file)
+        (when (and then (equal (org-moor-shown-file) (expand-file-name file)))
+          (funcall then))))))
+
+(declare-function w32-shell-execute "w32fns.c")
+
+(defun org-moor-open-outside (file)
+  "Open FILE with the program the system opens it with, not in Emacs."
+  (let ((file (expand-file-name file)))
+    (pcase system-type
+      ('windows-nt (w32-shell-execute "open" (subst-char-in-string ?/ ?\\ file)))
+      ('darwin (call-process "open" nil 0 nil file))
+      (_ (call-process "xdg-open" nil 0 nil file)))))
 
 (defun org-moor-open-origin (origin)
   "Open ORIGIN: a URL in the browser, a path where it still is."
@@ -385,10 +455,8 @@ FROM, a marker at a heading, is kept in the copy's buffer as the heading
 it is read for."
   (cond
    ((plist-get record :copy)
-    (org-moor-open-copy (plist-get record :copy) place)
-    (when (and from (equal (file-truename (or buffer-file-name ""))
-                           (file-truename (plist-get record :copy))))
-      (setq org-moor--read-for from)))
+    (org-moor-open-copy (plist-get record :copy) place
+                        (and from (lambda () (setq org-moor--read-for from)))))
    ((plist-get record :origin)
     (org-moor-open-origin (plist-get record :origin))
     ;; Said last, so that nothing said in opening hides it: what is open
@@ -409,21 +477,38 @@ it is read for."
 
 ;;;; Links
 
+(defcustom org-moor-text-place-length 40
+  "Characters of a text a place is kept by, at most.
+Enough to find it again; the whole of what was selected is quoted."
+  :type 'integer
+  :group 'org-moor)
+
+(defun org-moor-text-place (text)
+  "Return the start of TEXT, a place to find it by in a link.
+On one line, without the brackets a link cannot hold, and not longer
+than `org-moor-text-place-length'; nil when nothing is left."
+  (let* ((words (split-string (replace-regexp-in-string "[][]" " " text) "[ \t\n]+" t))
+         (place (string-join words " ")))
+    (unless (string-empty-p place)
+      (if (> (length place) org-moor-text-place-length)
+          (string-trim-right (substring place 0 org-moor-text-place-length))
+        place))))
+
 (defun org-moor-link-name (record &optional place kind)
   "Return the name of a link to RECORD, or to PLACE in it: its title.
-KIND is `page' or `line', what PLACE is."
+KIND is `page', `line' or `text', what PLACE is; a text is a string."
   (let ((title (or (plist-get record :title) "source")))
-    (if place
-        (format "%s %s %d" title (if (eq kind 'page) "p." "l.") place)
-      title)))
+    (cond ((stringp place) (format "%s \u201c%s\u201d" title place))
+          (place (format "%s %s %d" title (if (eq kind 'page) "p." "l.") place))
+          (t title))))
 
 (defun org-moor-link (record &optional place kind)
   "Return a link to RECORD, or to PLACE in it, named by the source's title.
-KIND is `page' or `line', what PLACE is.  The name is the title, so that
+KIND is `page', `line' or `text', what PLACE is.  The name is the title, so that
 which source it is can be read where the link is: no heading says it."
   (let ((id (plist-get record :id)))
     (org-link-make-string
-     (if place (format "moor:%s::%d" id place) (format "moor:%s" id))
+     (if place (format "moor:%s::%s" id place) (format "moor:%s" id))
      (org-moor-link-name record place kind))))
 
 (defun org-moor-read-source (&optional prompt)
@@ -464,12 +549,13 @@ From this buffer's sources directory, and the default one."
   (pcase-let* ((`(,id . ,place) (org-moor-link-parse (string-remove-prefix "moor:" link)))
                (record (org-moor-find-record id)))
     (when record
-      (if (numberp place)
-          (org-moor-link-name record place
-                              (if (and (plist-get record :copy)
-                                       (org-moor-pdf-p (plist-get record :copy)))
-                                  'page 'line))
-        (org-moor-link-name record)))))
+      (cond ((numberp place)
+             (org-moor-link-name record place
+                                 (if (and (plist-get record :copy)
+                                          (org-moor-pdf-p (plist-get record :copy)))
+                                     'page 'line)))
+            (place (org-moor-link-name record place 'text))
+            (t (org-moor-link-name record))))))
 
 (org-link-set-parameters "moor"
                          :follow #'org-moor-link-follow

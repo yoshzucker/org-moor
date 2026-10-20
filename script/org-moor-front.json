@@ -1,0 +1,24 @@
+{
+  "sites": [
+    {
+      "note": "PowerPoint, Word or Excel for the web, showing a file by its id.",
+      "match": "^https://(?<host>[^/]+\\.sharepoint\\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]sourcedoc=(%7B|\\{)?(?<id>[0-9a-fA-F-]{36})",
+      "download": "https://{host}{site}/_layouts/15/download.aspx?UniqueId={id}"
+    },
+    {
+      "note": "A library's viewer -- a PDF, say -- showing a file by its path.",
+      "match": "^https://(?<host>[^/]+\\.sharepoint\\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]id=(?<path>[^&#]+(\\.|%2[Ee])\\w+)(&|#|$)",
+      "download": "https://{host}{site}/_layouts/15/download.aspx?SourceUrl={path}"
+    },
+    {
+      "note": "A Confluence Cloud page, as a PDF.",
+      "match": "^https://(?<host>[^/]+\\.atlassian\\.net)/wiki/(spaces/[^/]+/pages/(edit-v2/)?|.*[?&]pageId=)(?<id>\\d+)",
+      "download": "https://{host}/wiki/spaces/flyingpdf/pdfpageexport.action?pageId={id}"
+    },
+    {
+      "note": "A page only the browser can see whole, saved by SingleFile's shortcut, Ctrl+Shift+Y.  An example: give it your site.",
+      "match": "^https://intranet\\.example\\.com/",
+      "keys": "^+y"
+    }
+  ]
+}

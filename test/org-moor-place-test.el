@@ -9,6 +9,7 @@
 (require 'ert)
 (require 'org-moor)
 (require 'org-moor-take-test)
+(require 'eww)
 
 (defmacro org-moor-test--with-source (&rest body)
   "Run BODY in notes whose heading Topic links to a source with a text copy.
@@ -43,6 +44,46 @@ by where they lie."
     (should (equal (org-moor-place-string record 12 'page) "[[moor:ID::12][Rules p. 12]]\n"))
     (should (equal (org-moor-place-string record 3 'line " * said \n")
                    "[[moor:ID::3][Rules l. 3]]\n#+begin_quote\n,* said\n#+end_quote\n"))))
+
+(ert-deftest org-moor-test-text-place ()
+  "A text place is the start of what was selected, on one line, with no
+brackets, and is named by it."
+  (let ((org-moor-text-place-length 12)
+        (record '(:id "ID" :title "Page")))
+    (should (equal (org-moor-text-place "  rule\n [two] of three ") "rule two of"))
+    (should-not (org-moor-text-place " [ ] "))
+    (should (equal (org-moor-place-string record "rule two" 'text)
+                   "[[moor:ID::rule two][Page \u201crule two\u201d]]\n"))))
+
+(ert-deftest org-moor-test-page-in-eww ()
+  "A page is read in EWW, found at a text place, and a place noted there
+is the text selected."
+  (org-moor-test--with-notes "* Topic\n"
+    (let* ((orig (expand-file-name "page.html" dir))
+           ;; A batch Emacs's frame is narrow enough to break a line.
+           (shr-width 70)
+           (shr-use-fonts nil)
+           (org-moor-move-directories nil)
+           (org-moor-files-function (lambda () (list buffer-file-name))))
+      (with-temp-file orig
+        (insert "<html><body><p>rule one</p><p>rule two</p></body></html>"))
+      (org-moor-test--titles-as-given
+        (let* ((record (org-moor-record (org-moor-test--id-at (org-moor-take-file orig))))
+               (copy (plist-get record :copy)))
+          (save-buffer)
+          (goto-char (point-min))
+          (org-moor-link-follow (format "%s::rule two" (plist-get record :id)) nil)
+          (with-timeout (5 (ert-fail "EWW drew nothing"))
+            (while (not (and (derived-mode-p 'eww-mode) org-moor--read-for))
+              (accept-process-output nil 0.05)))
+          (should (equal (org-moor-shown-file) copy))
+          (should (looking-at "rule two"))
+          (set-mark (point)) (end-of-line) (activate-mark)
+          (org-moor-insert-place)
+          (should (string-search
+                   (format "[[moor:%s::rule two][page \u201crule two\u201d]]\n#+begin_quote\nrule two\n"
+                           (plist-get record :id))
+                   (with-current-buffer (window-buffer (next-window)) (buffer-string)))))))))
 
 (ert-deftest org-moor-test-insert-place-where-opened-from ()
   "A place noted in a copy opened from a heading goes into that heading,

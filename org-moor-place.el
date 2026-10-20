@@ -71,16 +71,26 @@ made readable as lies there too, and is the same source's."
 
 (defun org-moor-current-place ()
   "Return (PLACE . KIND) for what this buffer shows.
-The page of a PDF, KIND `page'; else the line point is on, or the first
-of those selected, KIND `line'."
-  (if-let* ((page (org-moor-current-page)))
-      (cons page 'page)
-    (cons (line-number-at-pos (if (use-region-p) (region-beginning) (point)))
-          'line)))
+The page of a PDF, KIND `page'; in EWW, whose lines are only how it was
+drawn, the start of what is selected, or of the line point is on, KIND
+`text'; else the line point is on, or the first of those selected, KIND
+`line'."
+  (cond
+   ((org-moor-current-page) (cons (org-moor-current-page) 'page))
+   ((derived-mode-p 'eww-mode)
+    (cons (org-moor-text-place
+           (if (use-region-p)
+               (buffer-substring-no-properties (region-beginning) (region-end))
+             (buffer-substring-no-properties (line-beginning-position)
+                                             (line-end-position))))
+          'text))
+   (t (cons (line-number-at-pos (if (use-region-p) (region-beginning) (point)))
+            'line))))
 
 (defun org-moor-place-string (record place kind &optional selection)
   "Return a link to PLACE of the source RECORD, with SELECTION quoted under it.
-KIND is `page' or `line', what PLACE is; nil PLACE links to the source."
+KIND is `page', `line' or `text', what PLACE is; nil PLACE links to the
+source."
   (concat (org-moor-link record place kind) "\n"
           (if (and selection (not (string-blank-p selection)))
               (concat "#+begin_quote\n"
@@ -160,7 +170,7 @@ is taken first.  In an org-noter session, `org-noter-insert-note' instead."
   (interactive)
   (if (and (bound-and-true-p org-noter--session) (not (derived-mode-p 'org-mode)))
       (call-interactively #'org-noter-insert-note)
-    (let* ((file (or buffer-file-name
+    (let* ((file (or (org-moor-shown-file)
                      (user-error "org-moor: this buffer is not a file")))
            (place (org-moor-current-place))
            (selection (org-moor-current-selection))
@@ -192,7 +202,7 @@ is taken first.  In an org-noter session, `org-noter-insert-note' instead."
         (display-buffer dock '((display-buffer-reuse-window display-buffer-pop-up-window)
                                (inhibit-same-window . t))))
       (when (use-region-p) (deactivate-mark))
-      (message "org-moor: noted %s %d" (if (eq (cdr place) 'page) "p." "l.") (car place)))))
+      (message "org-moor: noted %s" (org-moor-link-name record (car place) (cdr place))))))
 
 (define-obsolete-function-alias 'org-moor-insert-note #'org-moor-insert-place "0.2")
 
@@ -221,22 +231,29 @@ The heading at point, or a heading under it; asked for when several."
       (org-moor--choose-record (or records (user-error "org-moor: no source here"))))))
 
 ;;;###autoload (autoload 'org-moor-open-source "org-moor" nil t)
-(defun org-moor-open-source (&optional origin)
+(defun org-moor-open-source (&optional how)
   "Open the copy of the source at point, or one the heading links to.
-With ORIGIN (\\[universal-argument]), open where it came from instead."
+With HOW one \\[universal-argument], open where it came from instead; with
+two, open the copy outside Emacs, with the program the system opens it
+with -- a page in the browser."
   (interactive "P")
   (let ((record (org-moor--record-here)))
-    (if origin
-        (org-moor-open-origin (or (plist-get record :origin)
-                                  (user-error "org-moor: no origin")))
-      (org-moor-open-record record nil (org-moor--heading-marker)))))
+    (cond
+     ((equal how '(16))
+      (org-moor-open-outside (or (plist-get record :copy)
+                                 (user-error "org-moor: no copy of %s"
+                                             (plist-get record :title)))))
+     (how
+      (org-moor-open-origin (or (plist-get record :origin)
+                                (user-error "org-moor: no origin"))))
+     (t (org-moor-open-record record nil (org-moor--heading-marker))))))
 
 ;;;; A source's title
 
 (defun org-moor--record-at-point ()
   "Return the source of the link at point, of the copy shown, or the heading's."
-  (or (and buffer-file-name (not (derived-mode-p 'org-mode))
-           (org-moor-copy-record buffer-file-name))
+  (or (and (not (derived-mode-p 'org-mode)) (org-moor-shown-file)
+           (org-moor-copy-record (org-moor-shown-file)))
       (and (derived-mode-p 'org-mode) (org-moor--record-here))
       (user-error "org-moor: no source here")))
 
@@ -329,7 +346,7 @@ Only `i' and `q' are bound, so that the keys you move with stay yours.")
   "Read a copy without changing it; `i' notes the place at point, `q' stops.
 A text is read-only, and its line marked, while the mode is on."
   :lighter " Moor"
-  (unless (derived-mode-p 'pdf-view-mode 'doc-view-mode)
+  (unless (derived-mode-p 'pdf-view-mode 'doc-view-mode 'eww-mode)
     (if org-moor-noter-mode
         (progn (setq org-moor-noter--read-only buffer-read-only)
                (read-only-mode 1)
@@ -363,16 +380,17 @@ A heading that was out before reading began is left out, as it was."
 (defun org-moor-noter ()
   "Read a source of the heading at point beside the heading, to note it.
 The source of the link at point, or one the heading, or a heading under
-it, links to.  A PDF, or a copy read as text, opens on the left in
+it, links to.  A PDF, a page, or a copy read as text, opens on the left in
 `org-moor-noter-mode'; on the right, the heading, taken out by org-dock
 to be written in.  `i' notes the place there, as `org-moor-insert-place';
 `q' writes the heading back and puts the windows back, as C-c C-c in it
-does.  A PDF is shown by pdf-tools when it is there, else by DocView.
+does.  A PDF is shown by pdf-tools when it is there, else by DocView; a
+page, by EWW, where `i' notes what is selected as a text to find.
 Any other copy is opened as `org-moor-open-source' would."
   (interactive)
   (let* ((record (org-moor--record-here))
          (copy (plist-get record :copy)))
-    (if (not (and copy (or (org-moor-text-file-p copy) (org-moor-pdf-p copy))))
+    (if (not (and copy (org-moor-readable-here-p copy)))
         (org-moor-open-record record nil (org-moor--heading-marker))
       (let* ((windows (current-window-configuration))
              (in-copy (org-dock-origin-file))
@@ -389,12 +407,14 @@ Any other copy is opened as `org-moor-open-source' would."
         ;; a window that is then split shows nothing in the new one.
         (delete-other-windows)
         (set-window-buffer (split-window-right) dock)
-        (find-file copy)
-        (setq source (current-buffer)
-              org-moor--read-for heading)
-        (org-moor-noter-mode 1)
-        (setq org-moor-noter--session
-              (list :windows windows :dock dock :own (not in-copy)))))))
+        (org-moor-open-copy
+         copy nil
+         (lambda ()
+           (setq source (current-buffer)
+                 org-moor--read-for heading)
+           (org-moor-noter-mode 1)
+           (setq org-moor-noter--session
+                 (list :windows windows :dock dock :own (not in-copy)))))))))
 
 (provide 'org-moor-place)
 ;;; org-moor-place.el ends here
