@@ -70,6 +70,8 @@ What you want to take is usually in front of you outside Emacs.
 document in front -- a file open in an app, a file selected in the file
 manager, a page in a browser -- once, from a global hotkey, and exit.
 Each asks the app what it has open and sends it through org-protocol.
+What arrives goes where Emacs was left: at point when the buffer in front
+is Org, as if taken there; otherwise a heading is asked for.
 On Windows, a PowerPoint or Excel document opened from the web is saved as
 a copy by the app itself, which is taken with its URL as the origin; a
 Word document from the web, which cannot be copied that way, is taken as

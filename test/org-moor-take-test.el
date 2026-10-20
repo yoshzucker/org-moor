@@ -380,8 +380,33 @@ visual -- the link goes after that character."
               ((symbol-function 'select-frame-set-input-focus) #'ignore))
       (org-moor-protocol '(:path "/tmp/deck.pptx" :title "Plan"
                            :origin "https://s.example.com/deck.pptx" :via "chat"))
-      (should (equal args '("Plan" "/tmp/deck.pptx" t "chat" nil
+      (should (equal args '("Plan" "/tmp/deck.pptx" nil "chat" nil
                             "https://s.example.com/deck.pptx"))))))
+
+(ert-deftest org-moor-test-protocol-takes-where-emacs-is-left ()
+  "From outside Emacs, at point in the Org buffer in front; a heading is
+picked from any other."
+  (let (where)
+    (cl-letf (((symbol-function 'org-moor-take-url)
+               (lambda (_url _title pick &rest _)
+                 (setq where (if (and (not pick) (derived-mode-p 'org-mode))
+                                 (point)
+                               'picked))))
+              ((symbol-function 'select-frame-set-input-focus) #'ignore))
+      (save-window-excursion
+        (with-temp-buffer
+          (org-mode)
+          (insert "* Topic\ntext\n")
+          (goto-char 12)
+          (set-window-buffer (selected-window) (current-buffer))
+          (with-temp-buffer
+            (org-moor-protocol '(:url "https://x.com/a")))
+          (should (equal where 12)))
+        (with-temp-buffer
+          (fundamental-mode)
+          (set-window-buffer (selected-window) (current-buffer))
+          (org-moor-protocol '(:url "https://x.com/a"))
+          (should (eq where 'picked)))))))
 
 (ert-deftest org-moor-test-take-into-a-heading-out ()
   "A file taken to a heading that is out goes into its copy, and its source

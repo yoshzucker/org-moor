@@ -833,8 +833,9 @@ its copy is the file come there since SECONDS, a Unix time, moved to the
 source once whole -- see `org-moor-arriving'.  The third takes a file on
 disk, as does a file: URL, which a browser shows for a file it opened;
 ORIGIN, when given, is where that file was opened from.  Either arrives
-from outside Emacs, with no point to go to, so a heading is always picked,
-and Emacs is brought to the front to ask."
+from outside Emacs, and goes where the buffer Emacs shows in front is
+left: at its point when that is Org, as a take typed there would, else a
+heading is picked.  Emacs is brought to the front to ask."
   (select-frame-set-input-focus (selected-frame))
   (let ((url (plist-get info :url))
         (path (plist-get info :path))
@@ -842,19 +843,22 @@ and Emacs is brought to the front to ask."
     ;; A file opened in a browser has a file: URL, and is a file on disk.
     (when (and url (string-match "\\`file:" url))
       (setq path (org-moor-file-url-path url) url nil))
-    (cond
-     (path
-      (let ((org-moor--default-title title))
-        (org-moor-take-file path t (plist-get info :via) nil
-                            (plist-get info :origin))))
-     (url (org-moor-take-url
-           url title t
-           (when-let* ((dir (plist-get info :arriving)))
-             (org-moor-arriving
-              dir (if-let* ((since (plist-get info :since)))
-                      (seconds-to-time (string-to-number since))
-                    (current-time))))))
-     (t (message "org-moor: protocol URL had no url= or path="))))
+    ;; The server answers in no buffer of the user's; the one in front is
+    ;; where they left off.
+    (with-current-buffer (window-buffer (selected-window))
+      (cond
+       (path
+        (let ((org-moor--default-title title))
+          (org-moor-take-file path nil (plist-get info :via) nil
+                              (plist-get info :origin))))
+       (url (org-moor-take-url
+             url title nil
+             (when-let* ((dir (plist-get info :arriving)))
+               (org-moor-arriving
+                dir (if-let* ((since (plist-get info :since)))
+                        (seconds-to-time (string-to-number since))
+                      (current-time))))))
+       (t (message "org-moor: protocol URL had no url= or path=")))))
   nil)
 
 ;;;###autoload (autoload 'org-moor-protocol-setup "org-moor" nil nil)
