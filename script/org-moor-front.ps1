@@ -86,7 +86,10 @@ function Get-AddressValue($e) {
   $v = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
   if (-not $v) { return '' }
   $s = $v.Current.Value
-  if ($s -match '^(https?|file)://') { return $s }
+  # Firefox and Zen show the address unescaped -- spaces, Japanese -- which
+  # would not survive being handed on as one argument.
+  if ($s -match '^https?://') { return ([uri]$s).AbsoluteUri }
+  if ($s -match '^file://') { return $s }
   if ($s -match '^[A-Za-z]:[\\/]') { return 'file:///' + $s }
   if ($s -match '^[\w.-]+\.[a-z]{2,}(/|$)') { return 'https://' + $s }
   return ''
@@ -94,10 +97,14 @@ function Get-AddressValue($e) {
 
 # The address bar is the first text field in the window, ahead of the
 # page; the page is searched only when it is not, since a page as large as
-# PowerPoint for the web takes seconds to search.
+# PowerPoint for the web takes seconds to search.  Chromium shows it as an
+# edit field, Firefox and Zen as a combo box.
 function Get-BrowserUrl($root) {
-  $cond = New-Object System.Windows.Automation.PropertyCondition(
-    $AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)
+  $cond = New-Object System.Windows.Automation.OrCondition(
+    (New-Object System.Windows.Automation.PropertyCondition(
+      $AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Edit)),
+    (New-Object System.Windows.Automation.PropertyCondition(
+      $AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::ComboBox)))
   $first = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
   if ($first) {
     $url = Get-AddressValue $first
@@ -107,6 +114,18 @@ function Get-BrowserUrl($root) {
     $url = Get-AddressValue $e
     if ($url) { return $url }
   }
+  return ''
+}
+
+# Zen shows only the domain in the address bar while it is not being
+# typed in; the page itself, named by its title, has the whole URL.
+function Get-PageUrl($root, $title) {
+  $cond = New-Object System.Windows.Automation.AndCondition(
+    (New-Object System.Windows.Automation.PropertyCondition(
+      $AE::ControlTypeProperty, [System.Windows.Automation.ControlType]::Document)),
+    (New-Object System.Windows.Automation.PropertyCondition($AE::NameProperty, $title)))
+  $page = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+  if ($page) { return Get-AddressValue $page }
   return ''
 }
 
@@ -125,7 +144,7 @@ $BrowserDownloads = @(
   @{ Match = '^https://(?<host>[^/]+\.sharepoint\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]sourcedoc=(%7B|\{)?(?<id>[0-9a-fA-F-]{36})'
      Download = 'https://{host}{site}/_layouts/15/download.aspx?UniqueId={id}' },
   # A library's viewer -- a PDF, say -- showing a file by its path.
-  @{ Match = '^https://(?<host>[^/]+\.sharepoint\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]id=(?<path>[^&#]+\.\w+)(&|#|$)'
+  @{ Match = '^https://(?<host>[^/]+\.sharepoint\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]id=(?<path>[^&#]+(\.|%2[Ee])\w+)(&|#|$)'
      Download = 'https://{host}{site}/_layouts/15/download.aspx?SourceUrl={path}' },
   # A Confluence Cloud page, as a PDF.
   @{ Match = '^https://(?<host>[^/]+\.atlassian\.net)/wiki/(spaces/[^/]+/pages/(edit-v2/)?|.*[?&]pageId=)(?<id>\d+)'
@@ -182,6 +201,10 @@ switch -Regex ($exe) {
   '^(msedge|chrome|brave|firefox|zen)$' {
     $url = Get-BrowserUrl $window
     $title = $title -replace ' - (Microsoft.? Edge|Google Chrome|Brave)$', '' -replace ' - [^-]*Microsoft.? Edge$', '' -replace ' [-\u2014] (Mozilla Firefox|Zen( Browser)?)$', ''
+    if ($url -match '^https?://[^/]+/?$') {
+      $page = Get-PageUrl $window $title
+      if ($page) { $url = $page }
+    }
     $title = $title -replace '\.(pptx?|docx?|xlsx?|pdf)$', '' -replace ' - Confluence$', ''
     if ($url -match '^file:') {
       $path = Get-FileUrlPath $url; $url = ''; $title = ''
