@@ -45,7 +45,7 @@ org-moor needs [[https://github.com/yoshzucker/org-dock][org-dock]], which takes
   :defer t
   :commands (org-moor-take-clipboard org-moor-take-file org-moor-take-url
              org-moor-noter org-moor-insert-place org-moor-jump
-             org-moor-sweep org-moor-retitle)
+             org-moor-sweep org-moor-set-title org-moor-set-origin)
   :init
   (with-eval-after-load 'org-protocol
     (org-moor-protocol-setup)))
@@ -118,7 +118,8 @@ The settings most worth giving:
 | ~org-moor-insert-place~   | note the place being read, in the heading it is read for  |
 | ~org-moor-jump~           | back to any heading something was taken to                |
 | ~org-moor-open-source~    | open a source's copy, or its origin                       |
-| ~org-moor-retitle~        | give a source another title                               |
+| ~org-moor-set-title~      | give a source another title                               |
+| ~org-moor-set-origin~     | give the sources in the region (or at point) an origin    |
 | ~org-moor-sweep~          | what piled up, as one Dired buffer, newest first          |
 | ~org-moor-put-away~       | move files into a directory of yours (and take them)      |
 | ~org-moor-prune~          | choose which copies to let go                             |
@@ -310,7 +311,7 @@ heading under it, links to; with a prefix, the origin.
 
 ** Titles
 
-A source's title is in its record, out of the way, so ~org-moor-retitle~
+A source's title is in its record, out of the way, so ~org-moor-set-title~
 gives it another: on a link to it, in a copy of it, or on a heading
 linking to it.  The links in the buffer named by the old title are named
 by the new one, their places kept; links elsewhere keep their names,
@@ -321,8 +322,8 @@ which are only names.
 ~org-moor-prune~ lists the sources with a copy, largest first, with when
 each was taken, whether its origin is a URL, and whether anything still
 links to it.  ~d~ marks, ~u~ unmarks, ~x~ lets the marked ones go: the
-bytes are deleted, and the record, with the origin, stays.  ~t~ retitles,
-~RET~ opens.
+bytes are deleted, and the record, with the origin, stays.  ~t~ sets the title,
+~o~ the origin, ~RET~ opens.
 
 ** The sources directory
 

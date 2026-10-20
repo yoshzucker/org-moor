@@ -102,7 +102,8 @@ Its record stays, origin and all, and links to it open the origin."
     (define-key map (kbd "d") #'org-moor-prune-mark)
     (define-key map (kbd "u") #'org-moor-prune-unmark)
     (define-key map (kbd "x") #'org-moor-prune-execute)
-    (define-key map (kbd "t") #'org-moor-prune-retitle)
+    (define-key map (kbd "t") #'org-moor-prune-set-title)
+    (define-key map (kbd "o") #'org-moor-prune-set-origin)
     (define-key map (kbd "RET") #'org-moor-prune-visit)
     map)
   "Keys of the prune list.")
@@ -138,10 +139,16 @@ Its record stays, origin and all, and links to it open the origin."
   (interactive)
   (org-moor-open-record (org-moor-prune--copy-at-point)))
 
-(defun org-moor-prune-retitle (title)
+(defun org-moor-prune-set-title (title)
   "Give this source the title TITLE."
   (interactive (list (read-string "Title: " (plist-get (org-moor-prune--copy-at-point) :title))))
   (org-moor-record-set (org-moor-prune--copy-at-point) :title title)
+  (tabulated-list-revert))
+
+(defun org-moor-prune-set-origin (origin)
+  "Give this source the origin ORIGIN."
+  (interactive (list (read-string "Origin: " (plist-get (org-moor-prune--copy-at-point) :origin))))
+  (org-moor-set-origin (list (org-moor-prune--copy-at-point)) origin)
   (tabulated-list-revert))
 
 (defun org-moor-prune-execute ()

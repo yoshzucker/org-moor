@@ -107,7 +107,7 @@ taken out on the right, `i' noting there, `q' writing it back."
         (org-moor-open-source t)
         (should (equal opened orig))))))
 
-(ert-deftest org-moor-test-retitle ()
+(ert-deftest org-moor-test-set-title ()
   "A source given another title has it in its record, and in the links here
 named by the old one, their places kept."
   (org-moor-test--with-source
@@ -115,11 +115,23 @@ named by the old one, their places kept."
       (goto-char (point-max))
       (insert (format "As [[moor:%s::2][rules l. 2]] says, and [[moor:%s::1][my words]].\n" id id))
       (search-backward "rules l. 2")
-      (org-moor-retitle (org-moor--record-at-point) "House rules")
+      (org-moor-set-title (org-moor--record-at-point) "House rules")
       (should (equal (plist-get (org-moor-record id) :title) "House rules"))
       (should (string-match-p (regexp-quote (format "[[moor:%s][House rules]]" id)) (buffer-string)))
       (should (string-match-p (regexp-quote (format "[[moor:%s::2][House rules l. 2]]" id)) (buffer-string)))
       (should (string-match-p (regexp-quote "[my words]]") (buffer-string))))))
+
+(ert-deftest org-moor-test-set-origin ()
+  "The sources linked in a region are given one origin together."
+  (org-moor-test--with-source
+    (let ((id (plist-get record :id)))
+      (org-moor-set-origin (mapcar #'org-moor-record
+                                   (org-moor-ids-in (point-min) (point-max)))
+                           " https://example.com/shared/rules.zip ")
+      (should (equal (plist-get (org-moor-record id) :origin)
+                     "https://example.com/shared/rules.zip"))
+      (should (equal (plist-get (org-moor-record id) :title)
+                     (plist-get record :title))))))
 
 (ert-deftest org-moor-test-prune ()
   "The copies are listed from the sources, with whether anything links to

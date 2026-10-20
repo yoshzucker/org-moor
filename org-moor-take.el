@@ -191,13 +191,55 @@ heading at its top level titled TITLE, the lines in it."
 As `org-moor-insert-lines' writes."
   (org-moor-insert-lines target title (concat link "\n")))
 
+(defvar evil-state)
+
+(declare-function evil-visual-state-p "evil-states")
+(declare-function evil-exit-visual-state "evil-states")
+
+(defun org-moor--here-p (target)
+  "Non-nil when TARGET is point in this buffer, where a link is typed.
+Not in a heading's stars, where text would make it no heading, nor in a
+heading taken out by org-dock, which is written in its copy."
+  (and (markerp target)
+       (eq (marker-buffer target) (current-buffer))
+       (= target (point))
+       (not (save-excursion
+              (beginning-of-line)
+              (and (looking-at org-outline-regexp)
+                   (< target (match-end 0)))))
+       (not (org-dock-copy-of target))))
+
+(defun org-moor--on-character-p ()
+  "Non-nil when the cursor is on a character, not between two.
+So it is in every Evil state but insert, replace and Emacs, whatever
+other states there are."
+  (and (bound-and-true-p evil-local-mode)
+       (not (memq evil-state '(insert replace emacs)))))
+
+(defun org-moor-insert-link-here (link)
+  "Insert LINK at point, as typed, leaving point after it.
+When the cursor is on a character -- Evil's normal, motion, visual
+state -- after that character, as \`a' would type it; visual state is
+left first.  Return a marker at the link."
+  (when (and (fboundp 'evil-visual-state-p) (evil-visual-state-p))
+    (evil-exit-visual-state))
+  (when (and (org-moor--on-character-p) (not (eolp)))
+    (forward-char 1))
+  (prog1 (point-marker)
+    (insert link)))
+
 (defun org-moor--take-at (target title take)
   "Take a source at TARGET, titled TITLE, and return a marker at its link.
 TAKE is called with the sources directory of TARGET, and returns the
-record of what it took there.  TARGET is let go of, whatever happens."
+record of what it took there.  At point, the link goes in the text, see
+`org-moor-insert-link-here'; elsewhere on a line of its own.  TARGET is
+let go of, whatever happens."
   (unwind-protect
-      (org-moor-insert-link-line
-       target title (org-moor-link (funcall take (org-moor--target-sources target))))
+      (let ((here (org-moor--here-p target))
+            (link (org-moor-link (funcall take (org-moor--target-sources target)))))
+        (if here
+            (org-moor-insert-link-here link)
+          (org-moor-insert-link-line target title link)))
     (org-moor--release target)))
 
 ;;;; The clipboard

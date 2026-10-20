@@ -120,7 +120,7 @@ the copy, with its record, in the file's sources."
       (should (file-exists-p orig)))))
 
 (ert-deftest org-moor-test-take-file-in-text ()
-  "Taken with point in a heading's text, the link goes after that line."
+  "Taken with point in a heading's text, the link goes there, point after it."
   (org-moor-test--with-notes "* Topic\nfirst\nsecond\n"
     (let ((orig (expand-file-name "a.txt" dir))
           (org-moor-move-directories nil))
@@ -129,7 +129,27 @@ the copy, with its record, in the file's sources."
       (org-moor-test--titles-as-given
         (let ((id (org-moor-test--id-at (org-moor-take-file orig))))
           (should (equal (buffer-string)
-                         (format "* Topic\nfirst\n[[moor:%s][a]]\nsecond\n" id))))))))
+                         (format "* Topic\nfir[[moor:%s][a]]st\nsecond\n" id)))
+          (should (looking-at-p "st\n")))))))
+
+(defvar evil-local-mode)
+(defvar evil-state)
+
+(ert-deftest org-moor-test-take-file-in-text-evil-normal ()
+  "In an Evil state with the cursor on a character -- normal, motion,
+visual -- the link goes after that character."
+  (org-moor-test--with-notes "* Topic\nfirst\n"
+    (let ((orig (expand-file-name "a.txt" dir))
+          (org-moor-move-directories nil)
+          (evil-local-mode t)
+          (evil-state 'motion))
+      (with-temp-file orig (insert "a"))
+      (search-forward "firs")
+      (org-moor-test--titles-as-given
+        (let ((id (org-moor-test--id-at (org-moor-take-file orig))))
+          (should (equal (buffer-string)
+                         (format "* Topic\nfirst[[moor:%s][a]]\n" id)))
+          (should (eolp)))))))
 
 (defmacro org-moor-test--serving (type disposition body &rest forms)
   "Run FORMS with every fetch sending BODY as TYPE, with DISPOSITION.
@@ -382,3 +402,17 @@ into the sources of the heading's own file."
 
 (provide 'org-moor-take-test)
 ;;; org-moor-take-test.el ends here
+
+(ert-deftest org-moor-test-take-file-on-heading-line ()
+  "Taken on a heading's line, the link goes there too, as it is typed."
+  (org-moor-test--with-notes "* Topic\n"
+    (let ((orig (expand-file-name "a.txt" dir))
+          (org-moor-move-directories nil))
+      (with-temp-file orig (insert "a"))
+      (goto-char (point-min))
+      (end-of-line)
+      (insert " ")
+      (org-moor-test--titles-as-given
+        (let ((id (org-moor-test--id-at (org-moor-take-file orig))))
+          (should (equal (buffer-string) (format "* Topic [[moor:%s][a]]\n" id)))
+          (should (eolp)))))))

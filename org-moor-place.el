@@ -27,7 +27,7 @@
 ;; links to; with a prefix, the source's origin -- the page on the web, or
 ;; the file where it was.
 ;;
-;; `org-moor-retitle' gives a source another title, since the record that
+;; `org-moor-set-title' gives a source another title, since the record that
 ;; holds it is out of the way, and the links here that bear the old one.
 
 ;;; Code:
@@ -240,8 +240,38 @@ With ORIGIN (\\[universal-argument]), open where it came from instead."
       (and (derived-mode-p 'org-mode) (org-moor--record-here))
       (user-error "org-moor: no source here")))
 
-;;;###autoload (autoload 'org-moor-retitle "org-moor" nil t)
-(defun org-moor-retitle (record title)
+;;;###autoload (autoload 'org-moor-set-origin "org-moor" nil t)
+(defun org-moor-set-origin (records origin)
+  "Give each source of RECORDS the origin ORIGIN, in its record.
+Interactively, the sources linked in the region, else the source at
+point as `org-moor-set-title' finds it; ORIGIN is read, the clipboard's
+text offered.  For files taken from where they had been put, not from
+where they came -- downloaded from a shared folder, unpacked from an
+archive -- whose origin is that folder instead."
+  (interactive
+   (let ((records (if (use-region-p)
+                      (or (delq nil (mapcar #'org-moor-record
+                                            (org-moor-ids-in (region-beginning)
+                                                             (region-end))))
+                          (user-error "org-moor: no source linked in the region"))
+                    (list (org-moor--record-at-point))))
+         (clip (ignore-errors (string-trim (or (gui-get-selection 'CLIPBOARD) "")))))
+     (list records
+           (read-string (format "Origin of %d source%s: " (length records)
+                                (if (cdr records) "s" ""))
+                        (and clip (not (string-empty-p clip))
+                             (not (string-match-p "\n" clip))
+                             clip)))))
+  (when (string-empty-p (string-trim origin))
+    (user-error "org-moor: no origin given"))
+  (dolist (record records)
+    (org-moor-record-set record :origin (string-trim origin)))
+  (when (use-region-p) (deactivate-mark))
+  (message "org-moor: origin of %d source%s set to %s"
+           (length records) (if (cdr records) "s" "") origin))
+
+;;;###autoload (autoload 'org-moor-set-title "org-moor" nil t)
+(defun org-moor-set-title (record title)
   "Give the source RECORD the title TITLE, here and in its record.
 Interactively, the source of the link at point, of the copy shown, or
 one the heading links to.  A link to it in this buffer whose name begins

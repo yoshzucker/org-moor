@@ -38,7 +38,8 @@
 ;; `org-moor-noter'      read a source beside its heading, taken out to note in
 ;; `org-moor-insert-place' note the place being read, in its heading
 ;; `org-moor-open-source' the copy of a source the heading links to, C-u its origin
-;; `org-moor-retitle'    give a source another title
+;; `org-moor-set-title'  give a source another title
+;; `org-moor-set-origin' give the sources linked in the region an origin
 ;; `org-moor-prune'      choose which copies to let go, largest first
 ;;
 ;; See README.org.
