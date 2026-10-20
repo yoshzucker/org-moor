@@ -88,7 +88,9 @@ function Get-AddressValue($e) {
   $s = $v.Current.Value
   # Firefox and Zen show the address unescaped -- spaces, Japanese -- which
   # would not survive being handed on as one argument.
-  if ($s -match '^https?://') { return ([uri]$s).AbsoluteUri }
+  if ($s -match '^https?://') {
+    try { return ([uri]$s).AbsoluteUri } catch { return '' }
+  }
   if ($s -match '^file://') { return $s }
   if ($s -match '^[A-Za-z]:[\\/]') { return 'file:///' + $s }
   if ($s -match '^[\w.-]+\.[a-z]{2,}(/|$)') { return 'https://' + $s }
