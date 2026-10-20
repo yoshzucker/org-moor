@@ -260,10 +260,10 @@ and mail programs can copy -- since the clipboard does not say.
 ** Picking a heading, or a directory
 
 Wherever a heading is asked for, an existing one can be picked or a new
-one made in the same prompt: a name from the refile targets is that
-heading, ~PARENT/NAME~ makes NAME under PARENT, any other name makes a
-top-level heading in the inbox, and nothing makes one there titled by
-what is taken.  A directory is asked for the same way, under
+one made in the same prompt: a name from ~org-moor-take-targets~ --
+~org-refile-targets~ unless set -- is that heading, ~PARENT/NAME~ makes
+NAME under PARENT, any other name makes a top-level heading in the
+inbox, and nothing makes one there titled by what is taken.  A directory is asked for the same way, under
 ~org-moor-directory-roots~; a path that does not exist yet is made once
 you agree.
 

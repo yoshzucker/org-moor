@@ -12,7 +12,7 @@
 ;; Taking is the step that happens when you meet a thing, which is usually
 ;; outside Emacs, so every command here asks as little as it can: a title,
 ;; and where it goes.  Where it goes is anywhere: point when you are in Org,
-;; else a heading you pick from your refile targets, else
+;; else a heading you pick from `org-moor-take-targets', else
 ;; `org-moor-inbox-file'.  What goes there is a link to the source, on a
 ;; line of its own; the source itself goes in that file's sources
 ;; directory, and no heading is made for it.
@@ -39,13 +39,21 @@ Nil means `org-default-notes-file'."
 (defvar org-moor-heading-history nil
   "Headings picked for taking, newest first.")
 
+(defcustom org-moor-take-targets nil
+  "Headings a thing can be taken to, in the form of `org-refile-targets'.
+Nil means `org-refile-targets'.  Set it to offer more than refiling
+does -- every note, say, not only the files with tasks in them."
+  :type '(choice (const :tag "org-refile-targets" nil) sexp)
+  :group 'org-moor)
+
 (defun org-moor--targets ()
-  "Return the refile targets, read from the inbox when not in Org.
+  "Return the targets to take to, read from the inbox when not in Org.
 Each is (NAME FILE REGEXP POS); POS is nil for a file as a whole."
   (with-current-buffer (if (derived-mode-p 'org-mode)
                            (current-buffer)
                          (org-moor--inbox-buffer))
-    (org-refile-get-targets)))
+    (let ((org-refile-targets (or org-moor-take-targets org-refile-targets)))
+      (org-refile-get-targets))))
 
 (defun org-moor--target-at (entry)
   "Return the target for refile ENTRY: a marker, or its file for the top."
@@ -56,7 +64,7 @@ Each is (NAME FILE REGEXP POS); POS is nil for a file as a whole."
 
 (defun org-moor-read-heading (&optional prompt)
   "Read a heading to take to, existing or new, and return the target.
-A name from the refile targets is that heading.  PARENT/NAME, where
+A name from `org-moor-take-targets' is that heading.  PARENT/NAME, where
 PARENT is one, is a new heading NAME under it.  Any other name is a new
 heading at the top of the inbox.  Nothing is the inbox itself.
 

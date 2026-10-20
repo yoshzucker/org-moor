@@ -36,6 +36,15 @@
           (should (equal (org-get-heading t t t t) "Brand new"))
           (should (= (org-current-level) 1)))))))
 
+(ert-deftest org-moor-test-take-targets ()
+  (org-moor-test--with-notes "* Topic\n** Sub\n"
+    (let ((org-moor-inbox-file buffer-file-name)
+          (org-refile-targets '((nil :maxlevel . 1)))
+          (org-refile-use-outline-path nil))
+      (should-not (assoc "Sub" (org-moor--targets)))
+      (let ((org-moor-take-targets '((nil :maxlevel . 2))))
+        (should (assoc "Sub" (org-moor--targets)))))))
+
 (ert-deftest org-moor-test-read-directory ()
   (let* ((root (file-name-as-directory (make-temp-file "roots" t)))
          (org-moor-directory-roots (list root)))
