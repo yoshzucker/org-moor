@@ -29,10 +29,10 @@
 ;; to the source and the place inside it, and get back to all of it in
 ;; seconds.
 ;;
-;; `org-moor-quote'      quote the clipboard, titled, at point or a chosen heading
 ;; `org-moor-jump'       go back to any heading something was taken to
 ;; `org-moor-take-file'  take a file: its copy in the sources, a link to it here
 ;; `org-moor-take-url'   take a page or a file on the web, kept as what it sends
+;; `org-moor-take-clipboard' take the clipboard's text or image, as a source
 ;; `org-moor-sweep'      what piled up in downloads and the like, newest first
 ;; `org-moor-put-away'   move a file into a directory of yours, and take it too
 ;; `org-moor-noter'      read a source beside its heading, taken out to note in

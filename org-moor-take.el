@@ -200,42 +200,131 @@ record of what it took there.  TARGET is let go of, whatever happens."
        target title (org-moor-link (funcall take (org-moor--target-sources target))))
     (org-moor--release target)))
 
-(defun org-moor-quote-string (title text &optional time)
-  "Return TEXT as a quote block titled TITLE, taken at TIME."
-  (concat "#+begin_quote " title " "
-          (format-time-string (org-time-stamp-format t t) time) "\n"
-          (org-escape-code-in-string (string-trim-right text)) "\n"
-          "#+end_quote\n"))
+;;;; The clipboard
+
+;; What is copied -- a chat's message, a mail's paragraph, a screenshot --
+;; is taken as any file is: a source of its own, its text or its image the
+;; copy, so that it is kept, and read, where every other source is.
+
+(defun org-moor--clipboard-text ()
+  "Return the text on the system's clipboard, or nil."
+  ;; An empty string is not an answer: macOS gives one for UTF8_STRING, a
+  ;; type it does not serve, while the default type holds the text.
+  (when-let* ((text (seq-some
+                     (lambda (type)
+                       (let ((s (ignore-errors (gui-get-selection 'CLIPBOARD type))))
+                         (and (stringp s) (not (string-blank-p s)) s)))
+                     '(UTF8_STRING STRING))))
+    (substring-no-properties text)))
 
 (defun org-moor--clipboard ()
-  "Return the text on the clipboard, or signal if there is none."
-  ;; Each way is tried until one gives text.  An empty string is not an
-  ;; answer: macOS gives one for UTF8_STRING, a type it does not serve,
-  ;; while the default type holds the text.
-  (let ((text (seq-some
-               (lambda (get)
-                 (let ((s (ignore-errors (funcall get))))
-                   (and (stringp s) (not (string-blank-p s)) s)))
-               (list (lambda () (gui-get-selection 'CLIPBOARD 'UTF8_STRING))
-                     (lambda () (gui-get-selection 'CLIPBOARD))
-                     (lambda () (current-kill 0 t))))))
-    (if text
-        (substring-no-properties text)
-      (user-error "org-moor: the clipboard is empty"))))
+  "Return the text on the clipboard, or the latest kill, or signal."
+  (or (org-moor--clipboard-text)
+      (let ((s (ignore-errors (current-kill 0 t))))
+        (and (stringp s) (not (string-blank-p s)) (substring-no-properties s)))
+      (user-error "org-moor: the clipboard is empty")))
 
-;;;###autoload (autoload 'org-moor-quote "org-moor" nil t)
-(defun org-moor-quote (title &optional pick)
-  "Quote the clipboard under TITLE, at point or, with PICK, a chosen heading.
-TITLE says who it is from and about what: \"Chat from Robin\"."
-  (interactive (list (read-string "Title: ") current-prefix-arg))
-  (let* ((text (org-moor--clipboard))
-         (target (org-moor--target pick)))
+(defun org-moor--clipboard-image (file)
+  "Write the image on the clipboard to FILE as PNG; non-nil when there was one.
+Asked of Emacs first, which knows image/png on most systems; macOS's
+clipboard, which Emacs there does not read images from, is asked through
+AppleScript, and Windows's through PowerShell, when Emacs had nothing."
+  (let ((data (ignore-errors (gui-get-selection 'CLIPBOARD 'image/png))))
+    (cond
+     ((and (stringp data) (> (length data) 0))
+      (let ((coding-system-for-write 'no-conversion))
+        (with-temp-file file
+          (set-buffer-multibyte nil)
+          (insert data))))
+     ((and (eq system-type 'darwin) (executable-find "osascript"))
+      (call-process "osascript" nil nil nil
+                    "-e" "try"
+                    "-e" "set d to the clipboard as «class PNGf»"
+                    "-e" (format "set f to open for access (POSIX file %S) with write permission"
+                                 file)
+                    "-e" "write d to f"
+                    "-e" "close access f"
+                    "-e" "end try"))
+     ((and (eq system-type 'windows-nt) (executable-find "powershell"))
+      (call-process "powershell" nil nil nil "-NoProfile" "-Command"
+                    (concat "Add-Type -AssemblyName System.Windows.Forms;"
+                            "$i = [Windows.Forms.Clipboard]::GetImage();"
+                            "if ($i) { $i.Save('"
+                            (replace-regexp-in-string "'" "''" (convert-standard-filename file))
+                            "', [Drawing.Imaging.ImageFormat]::Png) }")))))
+  (if (and (file-exists-p file) (> (file-attribute-size (file-attributes file)) 0))
+      file
+    (when (file-exists-p file) (delete-file file))
+    nil))
+
+(defun org-moor--file-name-of (title extension)
+  "Return a file name made of TITLE, with EXTENSION."
+  (let ((name (string-trim (replace-regexp-in-string
+                            "[ /\\\\:*?\"<>|[:cntrl:]]+" " " title))))
+    (concat (if (string-empty-p name) "clipboard" (truncate-string-to-width name 60))
+            "." extension)))
+
+(defun org-moor-take-written-to (write extension sources title &optional via origin)
+  "Take what WRITE writes into SOURCES as a source titled TITLE; return its record.
+WRITE is called with the copy's file, named after TITLE with EXTENSION.
+VIA says how it arrived, `clipboard' when nil; ORIGIN, where it came
+from, is left out when nil.  Nothing is written in Org."
+  (let* ((record (org-moor-new-source title origin (or via 'clipboard) sources))
+         (name (org-moor--file-name-of title extension)))
+    (condition-case err
+        (funcall write (expand-file-name name (plist-get record :dir)))
+      (error
+       (delete-directory (plist-get record :dir) t)
+       (signal (car err) (cdr err))))
+    (org-moor-record-set record :file name)))
+
+(defun org-moor-take-text-to (text sources title &optional via origin)
+  "Take TEXT into SOURCES as a source titled TITLE, a text file its copy.
+VIA and ORIGIN as `org-moor-take-written-to' takes them."
+  (org-moor-take-written-to
+   (lambda (file) (org-moor--write-text file (concat (string-trim-right text) "\n")))
+   "txt" sources title via origin))
+
+;;;###autoload (autoload 'org-moor-take-clipboard "org-moor" nil t)
+(defun org-moor-take-clipboard (&optional pick via origin)
+  "Take the clipboard as a source: its text, or its image, a link to it here.
+The text is kept as a text file, the image as a PNG.  When the clipboard
+holds both -- cells copied from a spreadsheet -- you are asked which.
+At point when in Org; with PICK, at a chosen heading, as
+`org-moor-take-file' takes a file.  VIA says how it arrived, `clipboard'
+when nil; ORIGIN is where it came from -- a link to the message -- and
+left out when nil.  Return a marker at the link.
+
+Interactively one \\[universal-argument] picks the heading and asks VIA
+and ORIGIN."
+  (interactive
+   (let ((ask (and current-prefix-arg t)))
+     (list ask
+           (and ask (completing-read "Via: " '("chat" "mail" "web" "clipboard")))
+           (and ask (let ((o (string-trim (read-string "Origin (none): "))))
+                      (and (not (string-empty-p o)) o))))))
+  (let* ((image (make-temp-file "moor" nil ".png"))
+         (text (org-moor--clipboard-text))
+         (has-image (org-moor--clipboard-image image)))
     (unwind-protect
-        (set-marker (org-moor-insert-lines target title
-                                           (org-moor-quote-string title text))
-                    nil)
-      (org-moor--release target))
-    (message "Quoted: %s" title)))
+        (let* ((as (cond ((and text has-image)
+                          (if (eq (read-char-choice
+                                   "Take the clipboard as (t)ext or (i)mage? " '(?t ?i))
+                                  ?i)
+                              'image 'text))
+                         (has-image 'image)
+                         (t (setq text (org-moor--clipboard)) 'text)))
+               (title (read-string (if (eq as 'image) "Title (image): " "Title: "))))
+          (prog1 (org-moor--take-at
+                  (org-moor--target pick) title
+                  (lambda (sources)
+                    (if (eq as 'image)
+                        (org-moor-take-written-to
+                         (lambda (file) (copy-file image file))
+                         "png" sources title via origin)
+                      (org-moor-take-text-to text sources title via origin))))
+            (message "Took the clipboard's %s: %s" as title)))
+      (when (file-exists-p image) (delete-file image)))))
 
 ;;;; Files
 

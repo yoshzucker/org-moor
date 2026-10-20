@@ -11,9 +11,8 @@
 
 ;; There is no state to return to -- nothing is ever put away, since anything
 ;; can be asked for again at any time.  So the way back is a list of every
-;; heading something was taken to: one with a link to a source, or a titled
-;; quote, in its own text.  Most recently taken first, because that is
-;; usually where you were.
+;; heading something was taken to: one with a link to a source in its own
+;; text.  Most recently taken first, because that is usually where you were.
 ;;
 ;; The list is found, not kept: the files of `org-moor-files-function' are
 ;; read each time, so there is no index to fall out of step with them.
@@ -62,11 +61,8 @@ DESCRIBE gives the string an item is chosen by."
         (cdr (assoc (completing-read prompt table nil t) table)))
     (car items)))
 
-(defconst org-moor--taken-re
-  (concat "^[ \t]*#\\+begin_quote[ \t]+\\(.+\\)$"
-          "\\|\\[\\[moor:\\([^]:\n]+\\)")
-  "A titled quote's first line, its title in group 1; or a link to a
-source, its id in group 2.")
+(defconst org-moor--taken-re "\\[\\[moor:\\([^]:\n]+\\)"
+  "A link to a source, its id in group 1.")
 
 (defun org-moor--time-in (string)
   "Return the first timestamp in STRING as a time, or nil."
@@ -76,30 +72,26 @@ source, its id in group 2.")
 (defun org-moor-anchors-in-buffer ()
   "Return the headings in this buffer something was taken to.
 Each is a plist: :marker :path :time, the latest taking, and :count, the
-sources linked and the quotes, a source counted once however often its
-places are."
+sources linked, a source counted once however often its places are."
   (let ((table (make-hash-table))
         (times (make-hash-table :test #'equal)))
     (org-with-wide-buffer
      (goto-char (point-min))
      (while (re-search-forward org-moor--taken-re nil t)
-       (let ((title (match-string 1))
-             (id (match-string 2)))
+       (let ((id (match-string 1)))
          (unless (save-excursion (org-before-first-heading-p))
            (save-excursion
              (org-back-to-heading t)
              (let* ((pos (point))
                     (old (gethash pos table))
                     (ids (plist-get old :ids)))
-               (unless (and id (member id ids))
-                 (let ((time (if id
-                                 (let ((known (gethash id times 'unknown)))
-                                   (if (eq known 'unknown)
-                                       (puthash id (org-moor--time-in
-                                                    (plist-get (org-moor-find-record id) :taken))
-                                                times)
-                                     known))
-                               (org-moor--time-in title))))
+               (unless (member id ids)
+                 (let ((time (let ((known (gethash id times 'unknown)))
+                               (if (eq known 'unknown)
+                                   (puthash id (org-moor--time-in
+                                                (plist-get (org-moor-find-record id) :taken))
+                                            times)
+                                 known))))
                    (puthash pos
                             (list :marker (or (plist-get old :marker) (point-marker))
                                   :path (or (plist-get old :path)
@@ -110,7 +102,7 @@ places are."
                                               was
                                             time))
                                   :count (1+ (or (plist-get old :count) 0))
-                                  :ids (if id (cons id ids) ids))
+                                  :ids (cons id ids))
                             table)))))))))
     (org-moor--anchors table)))
 

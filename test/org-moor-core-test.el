@@ -137,5 +137,32 @@ a link to it named by its title."
       (should (plist-get (org-moor-record (match-string 1 printed)) :copy))
       (should (file-exists-p file)))))
 
+(ert-deftest org-moor-test-link-completes-by-title ()
+  "`org-insert-link' completes a `moor:' link by title, newest first,
+and names it by the title, its place too."
+  (org-moor-test--with-notes "* Topic\n"
+    (let ((old (org-moor-new-source "Old manual" nil 'file))
+          (new (org-moor-new-source "New memo" nil 'chat))
+          offered)
+      (org-moor-record-set old :taken "[2026-10-01 Thu 09:00]")
+      (org-moor-record-set new :taken "[2026-10-17 Sat 09:00]")
+      (with-temp-file (expand-file-name "m.pdf" (plist-get old :dir)) (insert "%PDF"))
+      (org-moor-record-set old :file "m.pdf")
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_p table &rest _)
+                   (setq offered (funcall table "" nil t))
+                   (seq-find (lambda (c) (string-prefix-p "Old manual" c)) offered))))
+        (should (equal (org-link-get-parameter "moor" :complete) #'org-moor-link-complete))
+        (should (equal (funcall (org-link-get-parameter "moor" :complete))
+                       (concat "moor:" (plist-get old :id)))))
+      (should (string-prefix-p "New memo" (car offered)))
+      (let ((describe (org-link-get-parameter "moor" :insert-description)))
+        (should (equal (funcall describe (concat "moor:" (plist-get old :id)) nil)
+                       "Old manual"))
+        (should (equal (funcall describe (concat "moor:" (plist-get old :id) "::12") nil)
+                       "Old manual p. 12"))
+        (should (equal (funcall describe (concat "moor:" (plist-get new :id) "::3") nil)
+                       "New memo l. 3"))))))
+
 (provide 'org-moor-core-test)
 ;;; org-moor-core-test.el ends here

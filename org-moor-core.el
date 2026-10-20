@@ -34,6 +34,7 @@
 (require 'ol)
 (require 'subr-x)
 (require 'cl-lib)
+(require 'seq)
 (require 'org-dock)
 
 (defgroup org-moor nil
@@ -72,7 +73,7 @@ a document's in a directory of its own, say -- adds one here.")
   "The properties of a record, by the keys a RECORD plist has them under.
 Origin: where the source was when it was taken, a URL or a path, kept
 after it changes or is gone.  Via: how it arrived, as a word: web, file,
-mail, chat.  File: the copy's name in the source's directory.  Taken:
+mail, chat, clipboard.  File: the copy's name in the source's directory.  Taken:
 when, as an inactive timestamp.")
 
 ;;;; Where sources are
@@ -138,6 +139,18 @@ In SOURCES, by default this buffer's sources directory.  Keys are :id,
 :title, :origin, :via, :file, :taken, :dir, its directory, and :copy,
 the copy's path while it is there."
   (org-moor--record-in (org-moor-source-directory id sources) id))
+
+(defun org-moor-sources-in (sources)
+  "Return every source in the directory SOURCES, as records."
+  (let (records)
+    (dolist (two (ignore-errors (directory-files sources t "\\`[^.].\\'")))
+      (when (file-directory-p two)
+        (dolist (dir (directory-files two t "\\`[^.]"))
+          (when (file-directory-p dir)
+            (when-let* ((record (org-moor--record-in (file-name-as-directory dir)
+                                                     (org-moor--dir-id dir))))
+              (push record records))))))
+    records))
 
 (defun org-moor-find-record (id)
   "Return source ID from this buffer's sources directory, or the default's.
@@ -394,21 +407,74 @@ it is read for."
                                        (abbreviate-file-name (org-moor-sources))))))
     (org-moor-open-record record place (org-moor--heading-marker))))
 
-(org-link-set-parameters "moor" :follow #'org-moor-link-follow)
-
 ;;;; Links
+
+(defun org-moor-link-name (record &optional place kind)
+  "Return the name of a link to RECORD, or to PLACE in it: its title.
+KIND is `page' or `line', what PLACE is."
+  (let ((title (or (plist-get record :title) "source")))
+    (if place
+        (format "%s %s %d" title (if (eq kind 'page) "p." "l.") place)
+      title)))
 
 (defun org-moor-link (record &optional place kind)
   "Return a link to RECORD, or to PLACE in it, named by the source's title.
 KIND is `page' or `line', what PLACE is.  The name is the title, so that
 which source it is can be read where the link is: no heading says it."
-  (let ((id (plist-get record :id))
-        (title (or (plist-get record :title) "source")))
+  (let ((id (plist-get record :id)))
     (org-link-make-string
      (if place (format "moor:%s::%d" id place) (format "moor:%s" id))
-     (if place
-         (format "%s %s %d" title (if (eq kind 'page) "p." "l.") place)
-       title))))
+     (org-moor-link-name record place kind))))
+
+(defun org-moor-read-source (&optional prompt)
+  "Read a source by its title, newest taken first, and return its record.
+From this buffer's sources directory, and the default one."
+  (let* ((records (seq-uniq
+                   (append (org-moor-sources-in (org-moor-sources))
+                           (org-moor-sources-in org-moor-sources-directory))
+                   (lambda (a b) (equal (plist-get a :id) (plist-get b :id)))))
+         (records (sort records (lambda (a b)
+                                  (string> (or (plist-get a :taken) "")
+                                           (or (plist-get b :taken) "")))))
+         (table (mapcar (lambda (r)
+                          (cons (format "%s  %s %s  %s"
+                                        (or (plist-get r :title) "")
+                                        (or (plist-get r :taken) "")
+                                        (or (plist-get r :via) "")
+                                        (substring (plist-get r :id) 0 8))
+                                r))
+                        records)))
+    (unless table
+      (user-error "org-moor: no source in %s" (abbreviate-file-name (org-moor-sources))))
+    (cdr (assoc (completing-read
+                 (or prompt "Source: ")
+                 (lambda (string pred action)
+                   (if (eq action 'metadata)
+                       '(metadata (display-sort-function . identity))
+                     (complete-with-action action table string pred)))
+                 nil t)
+                table))))
+
+(defun org-moor-link-complete (&optional _arg)
+  "Return a `moor:' link to a source read by its title, for `org-insert-link'."
+  (concat "moor:" (plist-get (org-moor-read-source) :id)))
+
+(defun org-moor-link-description (link _description)
+  "Return the name a `moor:' LINK is given: its source's title, and its place."
+  (pcase-let* ((`(,id . ,place) (org-moor-link-parse (string-remove-prefix "moor:" link)))
+               (record (org-moor-find-record id)))
+    (when record
+      (if (numberp place)
+          (org-moor-link-name record place
+                              (if (and (plist-get record :copy)
+                                       (org-moor-pdf-p (plist-get record :copy)))
+                                  'page 'line))
+        (org-moor-link-name record)))))
+
+(org-link-set-parameters "moor"
+                         :follow #'org-moor-link-follow
+                         :complete #'org-moor-link-complete
+                         :insert-description #'org-moor-link-description)
 
 (defconst org-moor--link-re "\\[\\[moor:\\([^]:\n]+\\)\\(?:::\\([^]\n]*\\)\\)?\\]"
   "A `moor:' link's start, its id in group 1 and its place in group 2.")
@@ -489,9 +555,11 @@ directory of the file the copy's heading is from."
 ;; followed, and a heading with sources taken out and handed to an agent, in
 ;; an Emacs that has only just started.
 ;;;###autoload (autoload 'org-moor-link-follow "org-moor")
+;;;###autoload (autoload 'org-moor-link-complete "org-moor")
+;;;###autoload (autoload 'org-moor-link-description "org-moor")
 ;;;###autoload (autoload 'org-moor-link-file "org-moor")
 ;;;###autoload (autoload 'org-moor-request-text "org-moor")
-;;;###autoload (with-eval-after-load 'ol (org-link-set-parameters "moor" :follow #'org-moor-link-follow))
+;;;###autoload (with-eval-after-load 'ol (org-link-set-parameters "moor" :follow #'org-moor-link-follow :complete #'org-moor-link-complete :insert-description #'org-moor-link-description))
 ;;;###autoload (with-eval-after-load 'org-dock (add-hook 'org-dock-link-file-functions #'org-moor-link-file) (add-hook 'org-dock-request-functions #'org-moor-request-text 10))
 
 (provide 'org-moor-core)

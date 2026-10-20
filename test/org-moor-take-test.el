@@ -9,23 +9,6 @@
 (require 'ert)
 (require 'org-moor)
 
-(ert-deftest org-moor-test-quote-string ()
-  (let ((s (org-moor-quote-string "Chat from Robin" "* not a heading\nok\n\n"
-                                  (encode-time '(0 12 10 17 10 2026 nil nil 32400)))))
-    (should (string-prefix-p "#+begin_quote Chat from Robin [2026-10-17" s))
-    (should (string-match-p "^,\\* not a heading$" s))
-    (should (string-suffix-p "ok\n#+end_quote\n" s))))
-
-(ert-deftest org-moor-test-quote-at-point ()
-  (with-temp-buffer
-    (org-mode)
-    (insert "* Topic\n")
-    (cl-letf (((symbol-function 'org-moor--clipboard) (lambda () "hello")))
-      (org-moor-quote "Mail from Alex"))
-    (goto-char (point-min))
-    (should (re-search-forward "^#\\+begin_quote Mail from Alex \\[" nil t))
-    (should (re-search-forward "^hello\n#\\+end_quote$" nil t))))
-
 (defmacro org-moor-test--with-notes (text &rest body)
   "Run BODY in a file-visiting Org buffer holding TEXT, with fresh sources.
 `dir' is the directory the file is in; the sources and org-dock's
@@ -59,13 +42,59 @@ copies are below it.  Every buffer visiting a file there is closed after."
   (org-with-point-at marker
     (and (looking-at org-moor--link-re) (match-string-no-properties 1))))
 
-(ert-deftest org-moor-test-quote-at-picked-heading ()
+(defmacro org-moor-test--clipboard (text image &rest body)
+  "Run BODY with TEXT on the clipboard, and an image when IMAGE."
+  (declare (indent 2))
+  `(cl-letf (((symbol-function 'org-moor--clipboard-text) (lambda () ,text))
+             ((symbol-function 'org-moor--clipboard-image)
+              (lambda (file)
+                (when ,image
+                  (let ((coding-system-for-write 'no-conversion))
+                    (with-temp-file file (insert "PNG")))
+                  file))))
+     ,@body))
+
+(ert-deftest org-moor-test-take-clipboard-text ()
+  "The clipboard's text is a source of its own, kept as a text file."
   (org-moor-test--with-notes "* Topic\nbody\n** Child\n"
-    (cl-letf (((symbol-function 'org-moor--clipboard) (lambda () "hi"))
-              ((symbol-function 'org-moor--target) (lambda (_) (copy-marker (point-min)))))
-      (org-moor-quote "Chat" t))
-    (should (string-match-p "\\`\\* Topic\nbody\n#\\+begin_quote Chat .*\nhi\n#\\+end_quote\n\\*\\* Child"
-                            (buffer-string)))))
+    (org-moor-test--clipboard "* not a heading\nok\n\n" nil
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Chat from Robin")))
+        (let* ((link (org-moor-take-clipboard nil "chat" "https://chat.example/m/1"))
+               (record (org-moor-record (org-moor-test--id-at link))))
+          (should (string-match-p "\\`\\* Topic\nbody\n\\[\\[moor:[^]]+\\]\\[Chat from Robin\\]\\]\n\\*\\* Child"
+                                  (buffer-string)))
+          (should (equal (plist-get record :title) "Chat from Robin"))
+          (should (equal (plist-get record :via) "chat"))
+          (should (equal (plist-get record :origin) "https://chat.example/m/1"))
+          (should (equal (plist-get record :file) "Chat from Robin.txt"))
+          (should (equal (with-temp-buffer
+                           (insert-file-contents (plist-get record :copy))
+                           (buffer-string))
+                         "* not a heading\nok\n")))))))
+
+(ert-deftest org-moor-test-take-clipboard-image ()
+  "An image on the clipboard is kept as a PNG; with text too, it is asked."
+  (org-moor-test--with-notes "* Topic\n"
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Board: a/b")))
+      (org-moor-test--clipboard nil t
+        (let ((record (org-moor-record (org-moor-test--id-at (org-moor-take-clipboard)))))
+          (should (equal (plist-get record :file) "Board a b.png"))
+          (should (equal (plist-get record :via) "clipboard"))
+          (should-not (plist-get record :origin))
+          (should (plist-get record :copy))))
+      (org-moor-test--clipboard "A1\tB1" t
+        (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) ?t)))
+          (should (equal (plist-get (org-moor-record
+                                     (org-moor-test--id-at (org-moor-take-clipboard)))
+                                    :file)
+                         "Board a b.txt")))))))
+
+(ert-deftest org-moor-test-take-clipboard-empty ()
+  (org-moor-test--with-notes "* Topic\n"
+    (org-moor-test--clipboard nil nil
+      (cl-letf (((symbol-function 'current-kill) (lambda (&rest _) nil)))
+        (should-error (org-moor-take-clipboard) :type 'user-error)))
+    (should (equal (buffer-string) "* Topic\n"))))
 
 (ert-deftest org-moor-test-take-file ()
   "Taking a file on a heading puts a link at the end of its own text, and
@@ -168,15 +197,16 @@ the copy, with its record, in the file's sources."
           (org-moor-move-directories nil))
       (with-temp-file orig (insert "x"))
       (org-moor-insert-heading 'inbox "First")
-      (cl-letf (((symbol-function 'org-moor--clipboard) (lambda () "words"))
-                ((symbol-function 'org-moor--target) (lambda (_) 'inbox)))
-        (org-moor-quote "Chat" t)
+      (cl-letf (((symbol-function 'org-moor--target) (lambda (_) 'inbox)))
+        (org-moor-test--clipboard "words" nil
+          (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "Chat")))
+            (org-moor-take-clipboard t)))
         (org-moor-test--titles-as-given
           (org-moor-take-file orig t)))
       (should (equal (org-map-entries (lambda () (org-get-heading t t t t)))
                      '("Old" "Older" "First" "Chat" "x")))
       (should (equal (org-map-entries #'org-current-level) '(1 2 1 1 1)))
-      (should (string-match-p "^\\* Chat\n#\\+begin_quote Chat .*\nwords\n" (buffer-string)))
+      (should (string-match-p "^\\* Chat\n\\[\\[moor:[^]]+\\]\\[Chat\\]\\]\n" (buffer-string)))
       (should (string-match-p "^\\* x\n\\[\\[moor:[^]]+\\]\\[x\\]\\]\n\\'" (buffer-string))))))
 
 (ert-deftest org-moor-test-take-file-refuses-and-undoes ()

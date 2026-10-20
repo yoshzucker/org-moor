@@ -43,7 +43,7 @@ org-moor needs [[https://github.com/yoshzucker/org-dock][org-dock]], which takes
   :straight (org-moor :host github :repo "yoshzucker/org-moor"
                       :files ("*.el" ("script" "script/*")))
   :defer t
-  :commands (org-moor-quote org-moor-take-file org-moor-take-url
+  :commands (org-moor-take-clipboard org-moor-take-file org-moor-take-url
              org-moor-noter org-moor-insert-place org-moor-jump
              org-moor-sweep org-moor-retitle)
   :init
@@ -111,7 +111,7 @@ The settings most worth giving:
 
 | Command                   | Does                                                      |
 |---------------------------+-----------------------------------------------------------|
-| ~org-moor-quote~          | quote the clipboard, titled                               |
+| ~org-moor-take-clipboard~ | take the clipboard's text or image                        |
 | ~org-moor-take-file~      | take a file (in Dired, the one at point)                  |
 | ~org-moor-take-url~       | take a web page                                           |
 | ~org-moor-noter~          | read a source beside its heading; ~i~ notes, ~q~ is done  |
@@ -131,9 +131,10 @@ Five words carry the weight, and they are kept apart on purpose.
 
 - a *heading* is always one of yours, in any of your Org files.  The
   package writes into it; it does not decide where it lives.
-- a *source* is something you took in: a web page, a file.  It has an
-  /origin/ -- where it was when you met it, a URL or a path -- which is
-  kept even after the origin changes or disappears.
+- a *source* is something you took in: a web page, a file, what was on
+  the clipboard -- a message, a screenshot.  It has an /origin/ -- where
+  it was when you met it, a URL or a path -- which is kept even after the
+  origin changes or disappears.
 - a *copy* is a source's bytes, kept with it.  A source may have no copy
   (a URL you only link to) or lose it (a copy let go); its origin and what
   you wrote about it remain.
@@ -188,21 +189,37 @@ Approval goes to the department head before finance.
 [[moor:6f1c...::12][Approval manual 2026 p. 12]]
 #+end_example
 
+Such a link is written as any Org link is: ~C-c C-l~, ~moor:~, and the
+source is chosen by its title, the newest taken first; it is named by the
+title, and a place added after ~::~ by the title and the place.
+
 The record is the source's, so it goes where the copy goes, and whatever
 is written about the source in Org can be moved, rewritten or thrown
 away without losing where it came from.
 
-** Words taken as they are
+** What is copied
 
-A message is quoted, not filed.  Its title -- who sent it, about what -- is
-written on the block's first line, where Org allows parameters, and the
-time it was taken follows:
+A message in a chat, a paragraph of a mail, a screenshot: what reaches
+you only on the clipboard is a source too, its text kept as a ~.txt~ file
+and its image as a ~.png~, named after its title.  So it is kept, read
+and linked as any file is -- an agent a heading is handed over to reads
+it with the rest -- and its places are lines, as any text's are.
 
 #+begin_example
-,#+begin_quote Chat from Robin [2026-10-17 Sat 10:12]
-Can we keep the old form for this month?
-,#+end_quote
+sources/a3/09.../Chat from Robin.txt
+sources/a3/09.../moor.org
+
+:PROPERTIES:
+:MOOR_ORIGIN: https://chat.example.com/.../message/1729
+:MOOR_VIA:    chat
+:MOOR_FILE:   Chat from Robin.txt
+:MOOR_TAKEN:  [2026-10-17 Sat 10:12]
+:END:
+,#+title: Chat from Robin
 #+end_example
+
+A quote block written by hand, or an image yanked with Org's own
+~yank-media~, is still yours to use; it is only not a source.
 
 ** Places
 
@@ -216,10 +233,11 @@ still finds them by searching.
 
 ** Taking
 
-~org-moor-take-file~ and ~org-moor-take-url~ ask for a title -- the file's
-name, the page's, what was sent with it -- and write a link named by it,
-on a line of its own: at point in Org, after the line it is on, or at the
-end of the heading's own text when point is on a heading.  The source goes
+~org-moor-take-file~, ~org-moor-take-url~ and ~org-moor-take-clipboard~ ask
+for a title -- the file's name, the page's, what was sent with it, who
+said what -- and write a link named by it, on a line of its own: at point
+in Org, after the line it is on, or at the end of the heading's own text
+when point is on a heading.  The source goes
 in the sources directory of that file.  From outside Org, or with a
 prefix, a heading is asked for.  A heading taken out by org-dock is
 written in its copy.
@@ -229,6 +247,14 @@ written in its copy.
 and copies one from anywhere else, where it is in somebody's place for
 it.  ~C-u C-u~ turns that round for one file.  In Dired it takes the file
 at point.
+
+~org-moor-take-clipboard~ takes the text on the clipboard, or the image;
+when there are both, as there are for cells copied from a spreadsheet,
+it asks which.  Emacs reads an image from the clipboard on most systems;
+on macOS it is read through AppleScript, and on Windows through
+PowerShell when Emacs has none.  With a prefix it also asks how the thing
+arrived and where it came from -- a link to the message, which most chat
+and mail programs can copy -- since the clipboard does not say.
 
 ** Picking a heading, or a directory
 

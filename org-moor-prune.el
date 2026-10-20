@@ -30,18 +30,6 @@
 (require 'cl-lib)
 (require 'seq)
 
-(defun org-moor-sources-in (sources)
-  "Return every source in the directory SOURCES, as records."
-  (let (records)
-    (dolist (two (ignore-errors (directory-files sources t "\\`[^.].\\'")))
-      (when (file-directory-p two)
-        (dolist (dir (directory-files two t "\\`[^.]"))
-          (when (file-directory-p dir)
-            (when-let* ((record (org-moor--record-in (file-name-as-directory dir)
-                                                     (org-moor--dir-id dir))))
-              (push record records))))))
-    records))
-
 (defun org-moor--kept (record)
   "Return the files kept for RECORD but its record.
 Its copy, and what was made readable of it."
