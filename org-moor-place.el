@@ -233,20 +233,21 @@ The heading at point, or a heading under it; asked for when several."
 ;;;###autoload (autoload 'org-moor-open-source "org-moor" nil t)
 (defun org-moor-open-source (&optional how)
   "Open the copy of the source at point, or one the heading links to.
-With HOW one \\[universal-argument], open where it came from instead; with
-two, open the copy outside Emacs, with the program the system opens it
-with -- a page in the browser."
+As following a link to it does: HOW, the prefix, nil for what
+`org-file-apps' says, \\[universal-argument] for Emacs, two for the program
+the system opens it with."
   (interactive "P")
-  (let ((record (org-moor--record-here)))
-    (cond
-     ((equal how '(16))
-      (org-moor-open-outside (or (plist-get record :copy)
-                                 (user-error "org-moor: no copy of %s"
-                                             (plist-get record :title)))))
-     (how
-      (org-moor-open-origin (or (plist-get record :origin)
-                                (user-error "org-moor: no origin"))))
-     (t (org-moor-open-record record nil (org-moor--heading-marker))))))
+  (org-moor-open-record (org-moor--record-here) nil (org-moor--heading-marker) how))
+
+;;;###autoload (autoload 'org-moor-open-origin "org-moor" nil t)
+(defun org-moor-open-origin (&optional how)
+  "Open where the source at point, or one the heading links to, came from.
+A URL in the browser; a path where it still is, HOW as for
+`org-moor-open-source'."
+  (interactive "P")
+  (org-moor--open-origin (or (plist-get (org-moor--record-here) :origin)
+                             (user-error "org-moor: no origin"))
+                         how))
 
 ;;;; A source's title
 
@@ -380,17 +381,19 @@ A heading that was out before reading began is left out, as it was."
 (defun org-moor-noter ()
   "Read a source of the heading at point beside the heading, to note it.
 The source of the link at point, or one the heading, or a heading under
-it, links to.  A PDF, a page, or a copy read as text, opens on the left in
+it, links to.  The copy, as Emacs can read it, opens on the left in
 `org-moor-noter-mode'; on the right, the heading, taken out by org-dock
 to be written in.  `i' notes the place there, as `org-moor-insert-place';
 `q' writes the heading back and puts the windows back, as C-c C-c in it
 does.  A PDF is shown by pdf-tools when it is there, else by DocView; a
-page, by EWW, where `i' notes what is selected as a text to find.
+page, by EWW, where `i' notes what is selected as a text to find; Word,
+PowerPoint and the like, as what pandoc makes them, whose lines `i'
+notes -- see `org-moor-readable-converters'.
 Any other copy is opened as `org-moor-open-source' would."
   (interactive)
   (let* ((record (org-moor--record-here))
          (copy (plist-get record :copy)))
-    (if (not (and copy (org-moor-readable-here-p copy)))
+    (if (not (and copy (org-moor-file-to-read copy)))
         (org-moor-open-record record nil (org-moor--heading-marker))
       (let* ((windows (current-window-configuration))
              (in-copy (org-dock-origin-file))
@@ -407,8 +410,8 @@ Any other copy is opened as `org-moor-open-source' would."
         ;; a window that is then split shows nothing in the new one.
         (delete-other-windows)
         (set-window-buffer (split-window-right) dock)
-        (org-moor-open-copy
-         copy nil
+        (org-moor-open-to-read
+         (org-moor-file-to-read copy)
          (lambda ()
            (setq source (current-buffer)
                  org-moor--read-for heading)

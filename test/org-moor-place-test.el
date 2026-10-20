@@ -139,14 +139,47 @@ taken out on the right, `i' noting there, `q' writing it back."
       (should-not buffer-read-only))))
 
 (ert-deftest org-moor-test-open-source ()
+  "A copy is opened by `org-open-file', given the prefix as a `file:' link
+is; the origin, by its own command."
   (org-moor-test--with-source
     (let (opened)
-      (let ((org-moor-open-function (lambda (f) (setq opened f)))
-            (org-moor-text-extensions nil))
+      (cl-letf (((symbol-function 'org-open-file)
+                 (lambda (f &optional how &rest _) (setq opened (list f how)))))
         (org-moor-open-source)
-        (should (equal opened copy))
-        (org-moor-open-source t)
-        (should (equal opened orig))))))
+        (should (equal opened (list copy nil)))
+        (org-moor-open-source '(16))
+        (should (equal opened (list copy '(16))))
+        (org-moor-link-follow (format "%s::2" (plist-get record :id)) '(16))
+        (should (equal opened (list copy '(16))))
+        (org-moor-open-origin)
+        (should (equal opened (list orig nil)))))))
+
+(ert-deftest org-moor-test-noter-office ()
+  "A Word document is read beside its heading as what pandoc makes it,
+and its lines are noted."
+  (skip-unless (executable-find "pandoc"))
+  (org-moor-test--with-notes "* Topic\n"
+    (let* ((md (expand-file-name "made.md" dir))
+           (orig (expand-file-name "rules.docx" dir))
+           (org-moor-move-directories nil)
+           (org-moor-files-function (lambda () (list buffer-file-name))))
+      (with-temp-file md (insert "rule one\n\nrule two\n"))
+      (call-process "pandoc" nil nil nil "-o" orig md)
+      (org-moor-test--titles-as-given
+        (let* ((record (org-moor-record (org-moor-test--id-at (org-moor-take-file orig))))
+               (copy (plist-get record :copy)))
+          (save-buffer)
+          (goto-char (point-min))
+          (org-moor-noter)
+          (should (equal buffer-file-name (concat copy ".md")))
+          (should org-moor-noter-mode)
+          (should (re-search-forward "rule two" nil t))
+          (org-moor-insert-place)
+          (should (string-search
+                   (format "[[moor:%s::%d][rules l. %d]]" (plist-get record :id)
+                           (line-number-at-pos) (line-number-at-pos))
+                   (with-current-buffer (window-buffer (next-window)) (buffer-string))))
+          (org-moor-noter-quit))))))
 
 (ert-deftest org-moor-test-set-title ()
   "A source given another title has it in its record, and in the links here

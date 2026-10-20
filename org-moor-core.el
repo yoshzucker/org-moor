@@ -262,18 +262,14 @@ to search for, as links written before lines were used have, or nil."
 
 (defcustom org-moor-eww-extensions '("html" "htm")
   "Extensions of copies read in EWW, where a place is a text.
-A copy whose extension is not here is opened as `org-moor-open-function'
-says; nil leaves HTML to it too."
+Only where a copy is read beside its heading, or a text in it is sought;
+otherwise a page is opened as `org-file-apps' says."
   :type '(repeat string)
   :group 'org-moor)
 
 (defun org-moor-eww-p (file)
   "Return non-nil when FILE is read in EWW; see `org-moor-eww-extensions'."
   (member (org-moor-extension file) org-moor-eww-extensions))
-
-(defun org-moor-readable-here-p (file)
-  "Return non-nil when FILE is shown in Emacs, where a place can be sought."
-  (or (org-moor-text-file-p file) (org-moor-pdf-p file) (org-moor-eww-p file)))
 
 (defun org-moor-file-url-path (url)
   "Return the file a file: URL names: file:///C:/a%20b.pdf is C:/a b.pdf."
@@ -360,14 +356,9 @@ Made once, and again only when FILE is newer; it goes with the copy."
 
 ;;;; Opening
 
-(defcustom org-moor-open-function nil
-  "Function called with a path to open a copy, or nil for `org-open-file'.
-Give it your own policy for which files the OS opens and which Emacs reads,
-so that it is decided once.  A place with a page in a PDF is opened in
-Emacs regardless, since only there can the page be sought; so is a place
-in a copy read as text."
-  :type '(choice (const :tag "org-open-file" nil) function)
-  :group 'org-moor)
+(make-obsolete-variable 'org-moor-open-function
+                        "a copy is opened by `org-open-file', as `org-file-apps' says."
+                        "0.3")
 
 (defun org-moor--eww-open (file then)
   "Show FILE in EWW, and call THEN in its buffer once it is drawn.
@@ -381,15 +372,20 @@ the buffer before then is lost when it is drawn."
     (add-hook 'eww-after-render-hook hook)
     (eww-open-file file)))
 
-(defun org-moor-open-copy (file &optional place then)
+(defun org-moor-open-copy (file &optional place then how)
   "Open FILE, at PLACE when there is one and Emacs can show it.
 PLACE is a page of a PDF; a line of a copy read as text, or of what a
-copy was made readable as, where an agent read it; or a text to find.
+copy was made readable as, where an agent read it; or a text to find,
+in a copy read as text or in a page, which EWW shows.  Without PLACE,
+FILE is opened by `org-open-file' as a `file:' link is, HOW being its
+IN-EMACS: nil for what `org-file-apps' says, (4) for Emacs, (16) for
+the program the system opens it with, which is so with PLACE too.
 THEN, when given, is called in the buffer that shows FILE, once it is
 shown; not when FILE is opened outside Emacs."
   (let ((readable (and (integerp place) (not (org-moor-pdf-p file))
                        (not (org-moor-text-file-p file))
-                       (org-moor--made-readable file))))
+                       (org-moor--made-readable file)))
+        (place (unless (equal how '(16)) place)))
     (cond
      ((and (integerp place) (org-moor-pdf-p file))
       (find-file file)
@@ -408,33 +404,37 @@ shown; not when FILE is opened outside Emacs."
       (find-file file)
       (org-moor-goto-text place)
       (when then (funcall then)))
-     ((org-moor-eww-p file)
+     ((and (stringp place) (org-moor-eww-p file))
       (org-moor--eww-open file (lambda ()
-                                 (when (stringp place) (org-moor-goto-text place))
+                                 (org-moor-goto-text place)
                                  (when then (funcall then)))))
-     ((org-moor-readable-here-p file)
-      (find-file file)
-      (when then (funcall then)))
-     (t (funcall (or org-moor-open-function #'org-open-file) file)
+     (t (org-open-file file how)
         (when (and then (equal (org-moor-shown-file) (expand-file-name file)))
           (funcall then))))))
 
-(declare-function w32-shell-execute "w32fns.c")
+(defun org-moor-file-to-read (copy)
+  "Return the file COPY is read beside its heading as, or nil.
+COPY itself when Emacs shows it -- a PDF, a text, a page in EWW -- else
+what it is made readable as, by `org-moor-readable-converters'; nil when
+it is neither."
+  (cond ((or (org-moor-text-file-p copy) (org-moor-pdf-p copy) (org-moor-eww-p copy))
+         copy)
+        ((assoc (org-moor-extension copy) org-moor-readable-converters)
+         (org-moor-readable copy))))
 
-(defun org-moor-open-outside (file)
-  "Open FILE with the program the system opens it with, not in Emacs."
-  (let ((file (expand-file-name file)))
-    (pcase system-type
-      ('windows-nt (w32-shell-execute "open" (subst-char-in-string ?/ ?\\ file)))
-      ('darwin (call-process "open" nil 0 nil file))
-      (_ (call-process "xdg-open" nil 0 nil file)))))
+(defun org-moor-open-to-read (file then)
+  "Show FILE, from `org-moor-file-to-read', and call THEN in its buffer."
+  (if (org-moor-eww-p file)
+      (org-moor--eww-open file then)
+    (find-file file)
+    (funcall then)))
 
-(defun org-moor-open-origin (origin)
-  "Open ORIGIN: a URL in the browser, a path where it still is."
+(defun org-moor--open-origin (origin &optional how)
+  "Open ORIGIN: a URL in the browser, a path where it still is.
+HOW is as `org-moor-open-copy' has it, for a path."
   (cond ((string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]+:[^\\]" origin)
          (browse-url origin))
-        ((file-exists-p origin)
-         (funcall (or org-moor-open-function #'org-open-file) origin))
+        ((file-exists-p origin) (org-open-file origin how))
         (t (user-error "org-moor: the origin is gone: %s" origin))))
 
 (defvar-local org-moor--read-for nil
@@ -449,16 +449,17 @@ Where what is noted from it is written; see `org-moor-insert-place'.")
            (org-back-to-heading t)
            (point-marker)))))
 
-(defun org-moor-open-record (record &optional place from)
+(defun org-moor-open-record (record &optional place from how)
   "Open the copy of RECORD at PLACE, or else its origin, saying so.
 FROM, a marker at a heading, is kept in the copy's buffer as the heading
-it is read for."
+it is read for.  HOW is as `org-moor-open-copy' has it."
   (cond
    ((plist-get record :copy)
     (org-moor-open-copy (plist-get record :copy) place
-                        (and from (lambda () (setq org-moor--read-for from)))))
+                        (and from (lambda () (setq org-moor--read-for from)))
+                        how))
    ((plist-get record :origin)
-    (org-moor-open-origin (plist-get record :origin))
+    (org-moor--open-origin (plist-get record :origin) how)
     ;; Said last, so that nothing said in opening hides it: what is open
     ;; now is the original, not a copy that can come to no harm.
     (message "%s" (propertize
@@ -467,13 +468,16 @@ it is read for."
                    'face 'warning)))
    (t (user-error "org-moor: %s has neither copy nor origin" (plist-get record :id)))))
 
-(defun org-moor-link-follow (path _arg)
-  "Open the place PATH: the copy at its page or line, or else the origin."
+(defun org-moor-link-follow (path arg)
+  "Open the place PATH: the copy at its page or line, or else the origin.
+ARG is the prefix `org-open-at-point' was given, as for a `file:' link:
+none opens the copy as `org-file-apps' says, \\[universal-argument] in Emacs,
+two in the program the system opens it with."
   (pcase-let* ((`(,id . ,place) (org-moor-link-parse path))
                (record (or (org-moor-find-record id)
                            (user-error "org-moor: no source %s in %s" id
                                        (abbreviate-file-name (org-moor-sources))))))
-    (org-moor-open-record record place (org-moor--heading-marker))))
+    (org-moor-open-record record place (org-moor--heading-marker) arg)))
 
 ;;;; Links
 
