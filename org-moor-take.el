@@ -763,7 +763,10 @@ nil.  Nothing is written in Org."
     (funcall (or keep #'org-moor-fetch) url (plist-get record :dir)
              (lambda (file)
                (if (not file)
-                   (message "org-moor: kept only the URL of %s" title)
+                   (message "%s" (propertize
+                                  (format "org-moor: no copy of %s; kept only its URL -- download it and give it with M-x org-moor-set-copy"
+                                          title)
+                                  'face 'warning))
                  (org-moor-record-set record :file file)
                  (message "Kept %s" title))
                (setq done t)))

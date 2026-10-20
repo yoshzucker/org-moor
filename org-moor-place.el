@@ -288,6 +288,56 @@ archive -- whose origin is that folder instead."
   (message "org-moor: origin of %d source%s set to %s"
            (length records) (if (cdr records) "s" "") origin))
 
+(defun org-moor--newest-piled ()
+  "Return the newest file in `org-moor-move-directories', or nil."
+  (car (sort (seq-filter #'file-regular-p
+                         (seq-mapcat (lambda (dir)
+                                       (and (file-directory-p dir)
+                                            (directory-files dir t "\\`[^.]")))
+                                     org-moor-move-directories))
+             #'file-newer-than-file-p)))
+
+;;;###autoload (autoload 'org-moor-set-copy "org-moor" nil t)
+(defun org-moor-set-copy (record file)
+  "Give the source RECORD the file FILE as its copy.
+For a source whose copy could not be kept -- a file behind a sign-in,
+downloaded by hand after -- or is to be replaced.  FILE is moved when it
+is in `org-moor-move-directories', else copied, as taking it would.
+Interactively in Dired, the file at point, and the source is read by
+its title; elsewhere, the source at point as `org-moor-set-title' finds
+it, and the file is read, the newest of `org-moor-move-directories'
+offered."
+  (interactive
+   (if-let* ((file (org-moor--file-at-point)))
+       (list (org-moor-read-source "Copy of: ") file)
+     (let ((record (org-moor--record-at-point))
+           (newest (org-moor--newest-piled)))
+       (list record
+             (read-file-name (format "Copy of %s: " (plist-get record :title))
+                             (and newest (file-name-directory newest))
+                             newest t
+                             (and newest (file-name-nondirectory newest)))))))
+  (let* ((file (expand-file-name file))
+         (name (file-name-nondirectory file))
+         (old (plist-get record :copy))
+         (copy (expand-file-name name (plist-get record :dir))))
+    (unless (file-regular-p file)
+      (user-error "org-moor: not a file: %s" file))
+    (when (and old (not (y-or-n-p (format "Replace the copy %s? "
+                                          (file-name-nondirectory old)))))
+      (user-error "org-moor: copy kept"))
+    (when old
+      ;; What the old copy was made readable as is not this one.
+      (let ((md (concat old ".md")))
+        (when (file-exists-p md) (delete-file md)))
+      (unless (equal (file-truename old) (file-truename copy))
+        (delete-file old)))
+    (if (org-moor-move-p file)
+        (rename-file file copy t)
+      (copy-file file copy t t))
+    (org-moor-record-set record :file name)
+    (message "org-moor: %s is the copy of %s" name (plist-get record :title))))
+
 ;;;###autoload (autoload 'org-moor-set-title "org-moor" nil t)
 (defun org-moor-set-title (record title)
   "Give the source RECORD the title TITLE, here and in its record.

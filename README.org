@@ -45,7 +45,8 @@ org-moor needs [[https://github.com/yoshzucker/org-dock][org-dock]], which takes
   :defer t
   :commands (org-moor-take-clipboard org-moor-take-file org-moor-take-url
              org-moor-noter org-moor-insert-place org-moor-jump
-             org-moor-sweep org-moor-set-title org-moor-set-origin)
+             org-moor-sweep org-moor-set-title org-moor-set-origin
+             org-moor-set-copy)
   :init
   (with-eval-after-load 'org-protocol
     (org-moor-protocol-setup)))
@@ -107,6 +108,9 @@ page of a PDF, a line, or a text in a page, which EWW shows.  When there
 is none -- it is
 still arriving, or could not be kept -- the original is opened, and the
 echo area says so, so that you know it is not a copy you are in.
+A copy that could not be kept is said so in the echo area when it fails;
+downloaded by hand, the file is given to the source with
+~org-moor-set-copy~, on a link to it or in Dired.
 
 The settings most worth giving:
 
@@ -132,6 +136,7 @@ The settings most worth giving:
 | ~org-moor-open-origin~    | open where a source came from                             |
 | ~org-moor-set-title~      | give a source another title                               |
 | ~org-moor-set-origin~     | give the sources in the region (or at point) an origin    |
+| ~org-moor-set-copy~       | give a source a file as its copy (one downloaded by hand) |
 | ~org-moor-sweep~          | what piled up, as one Dired buffer, newest first          |
 | ~org-moor-put-away~       | move files into a directory of yours (and take them)      |
 | ~org-moor-prune~          | choose which copies to let go                             |

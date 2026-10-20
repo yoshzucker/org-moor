@@ -181,6 +181,26 @@ and its lines are noted."
                    (with-current-buffer (window-buffer (next-window)) (buffer-string))))
           (org-moor-noter-quit))))))
 
+(ert-deftest org-moor-test-set-copy ()
+  "A file given to a source becomes its copy: moved from where things pile
+up, the old copy and what it was made readable as let go."
+  (org-moor-test--with-source
+    (let* ((pile (expand-file-name "pile/" dir))
+           (org-moor-move-directories (list pile))
+           (new (expand-file-name "rules v2.txt" pile))
+           (md (concat copy ".md")))
+      (make-directory pile)
+      (with-temp-file new (insert "rule three\n"))
+      (with-temp-file md)
+      (cl-letf (((symbol-function 'y-or-n-p) #'always))
+        (org-moor-set-copy record new))
+      (let ((now (org-moor-record (plist-get record :id))))
+        (should (equal (file-name-nondirectory (plist-get now :copy)) "rules v2.txt"))
+        (should (file-exists-p (plist-get now :copy))))
+      (should-not (file-exists-p new))
+      (should-not (file-exists-p copy))
+      (should-not (file-exists-p md)))))
+
 (ert-deftest org-moor-test-set-title ()
   "A source given another title has it in its record, and in the links here
 named by the old one, their places kept."

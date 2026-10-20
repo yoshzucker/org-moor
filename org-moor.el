@@ -41,6 +41,7 @@
 ;; `org-moor-open-origin' where a source the heading links to came from
 ;; `org-moor-set-title'  give a source another title
 ;; `org-moor-set-origin' give the sources linked in the region an origin
+;; `org-moor-set-copy'   give a source a file downloaded by hand as its copy
 ;; `org-moor-prune'      choose which copies to let go, largest first
 ;;
 ;; See README.org.
