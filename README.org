@@ -72,14 +72,15 @@ manager, a page in a browser -- once, from a global hotkey, and exit.
 Each asks the app what it has open and sends it through org-protocol.
 What arrives goes where Emacs was left: at point when the buffer in front
 is Org, as if taken there; otherwise a heading is asked for.
-On Windows, a PowerPoint or Excel document opened from the web is saved as
-a copy by the app itself, which is taken with its URL as the origin; a
-Word document from the web, which cannot be copied that way, is taken as
-its URL.  A file open in a browser is taken as the file: one on disk by
-its path, and one in SharePoint or OneDrive -- PowerPoint for the web, a
-PDF in its viewer -- by having the browser, which is signed in, download
-it; Emacs asks for the title meanwhile, and takes the file from the
-Downloads folder once it is whole, its URL kept as the origin.
+On Windows, a PowerPoint, Word or Excel document opened from the web is
+saved as a copy by the app itself, which is taken with its URL as the
+origin.  A message in Outlook -- open in its window, or selected in the
+list -- is saved as a ~.msg~ and taken.  A file open in a browser is
+taken as the file: one on disk by its path, and one in SharePoint or
+OneDrive -- PowerPoint for the web, a PDF in its viewer -- by having the
+browser, which is signed in, download it; Emacs asks for the title
+meanwhile, and takes the file from the Downloads folder once it is
+whole, its URL kept as the origin.
 
 What a URL is, Emacs tells by what it sends, not by how it is spelled: a
 page is kept as a page, and a file -- a PDF behind ~/download?id=3~ --

@@ -4,9 +4,10 @@
 
 .DESCRIPTION
   Run from a global hotkey while the document is in front: a file open in
-  PowerPoint, Word or Excel, a file selected in Explorer, or a page in Edge
-  Chrome, Firefox or Zen.  It asks the app what it has open, hands that to Emacs through
-  org-protocol, and exits; nothing stays running.
+  PowerPoint, Word or Excel, a message in Outlook, a file selected in
+  Explorer, or a page in Edge, Chrome, Firefox or Zen.  It asks the app
+  what it has open, hands that to Emacs through org-protocol, and exits;
+  nothing stays running.
 
   A document opened from the web -- SharePoint, OneDrive -- has a URL for
   a file, which nothing outside the app can download without signing in.
@@ -105,6 +106,46 @@ Get-ChildItem -LiteralPath $copies -File |
 function Get-OfficeDocument($progId, $property) {
   $app = [Runtime.InteropServices.Marshal]::GetActiveObject($progId)
   if ($app) { return $app.$property }
+}
+
+function Add-ZipEntry($archive, $name, $bytes) {
+  $out = $archive.CreateEntry($name).Open()
+  try { $out.Write($bytes, 0, $bytes.Length) } finally { $out.Dispose() }
+}
+
+# Word has no call that saves a copy and keeps working on the original --
+# its SaveCopyAs fails on a document from the web, and SaveAs moves the
+# open document onto the copy -- but it hands out the whole document as
+# Flat OPC XML, which is the parts of the .docx, written out here as one.
+function Save-WordCopy($doc, $copy) {
+  [xml]$flat = $doc.WordOpenXML
+  $pkg = 'http://schemas.microsoft.com/office/2006/xmlPackage'
+  $ns = New-Object System.Xml.XmlNamespaceManager($flat.NameTable)
+  $ns.AddNamespace('pkg', $pkg)
+  $utf8 = New-Object Text.UTF8Encoding($false)
+  $decl = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+  $types = New-Object Text.StringBuilder
+  [void]$types.Append($decl + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">')
+  Add-Type -AssemblyName System.IO.Compression
+  $stream = $null; $archive = $null
+  try {
+    $stream = [IO.File]::Create($copy)
+    $archive = New-Object System.IO.Compression.ZipArchive($stream, [System.IO.Compression.ZipArchiveMode]::Create)
+    foreach ($part in $flat.SelectNodes('/pkg:package/pkg:part', $ns)) {
+      $name = $part.GetAttribute('name', $pkg)
+      $type = $part.GetAttribute('contentType', $pkg)
+      [void]$types.Append('<Override PartName="' + [Security.SecurityElement]::Escape($name) + '" ContentType="' + [Security.SecurityElement]::Escape($type) + '"/>')
+      $binary = $part.SelectSingleNode('pkg:binaryData', $ns)
+      $bytes = if ($binary) { [Convert]::FromBase64String($binary.InnerText) }
+               else { $utf8.GetBytes($decl + $part.SelectSingleNode('pkg:xmlData', $ns).InnerXml) }
+      Add-ZipEntry $archive $name.TrimStart('/') $bytes
+    }
+    [void]$types.Append('</Types>')
+    Add-ZipEntry $archive '[Content_Types].xml' $utf8.GetBytes($types.ToString())
+  } finally {
+    if ($archive) { $archive.Dispose() }
+    if ($stream) { $stream.Dispose() }
+  }
 }
 
 function Get-UrlFileName($url) {
@@ -210,10 +251,11 @@ switch -Regex ($exe) {
     $title = [string]$doc.Name
     if ($full -match '^https?://') {
       $copy = Join-Path $copies (Get-UrlFileName $full)
-      # PowerPoint and Excel save a copy and keep working on the original.
-      # Word has no such call -- its SaveAs moves the open document onto the
-      # copy -- so a Word document from the web is taken as its URL only.
-      if ($exe -ne 'WINWORD') {
+      # PowerPoint and Excel save a copy and keep working on the original;
+      # Word is asked for its parts instead.
+      if ($exe -eq 'WINWORD') {
+        try { Save-WordCopy $doc $copy } catch { Remove-Item -LiteralPath $copy -Force }
+      } else {
         try { $doc.SaveCopyAs($copy) } catch {}
       }
       if (Test-Path -LiteralPath $copy) { $path = $copy; $origin = $full }
@@ -221,6 +263,27 @@ switch -Regex ($exe) {
     } else {
       $path = $full
     }
+  }
+  '^OUTLOOK$' {
+    # A message open in its own window, else the one selected in the list,
+    # saved as a .msg, which is what is taken: Outlook has no path for it.
+    # Class 35 is a message's own window and 43 a mail item; 9 saves the
+    # .msg as Unicode, which keeps Japanese as it is.
+    $ol = [Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application')
+    if (-not $ol) { break }
+    $active = $ol.ActiveWindow()
+    $item = if ($active.Class -eq 35) { $active.CurrentItem }
+            elseif ($active.Selection.Count -gt 0) { $active.Selection.Item(1) }
+    if (-not $item -or $item.Class -ne 43) { break }
+    $title = [string]$item.Subject
+    $name = ($title -replace '[\\/:*?"<>|\p{Cc}]', '_').Trim(' .')
+    if (-not $name) { $name = 'message' }
+    if ($name.Length -gt 100) { $name = $name.Substring(0, 100) }
+    $copy = Join-Path $copies ($name + '.msg')
+    # An earlier copy of the same name is not to stand in for this one.
+    Remove-Item -LiteralPath $copy -Force
+    try { $item.SaveAs($copy, 9) } catch {}
+    if (Test-Path -LiteralPath $copy) { $path = $copy }
   }
   '^explorer$' {
     $shell = New-Object -ComObject Shell.Application
