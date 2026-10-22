@@ -201,6 +201,25 @@ up, the old copy and what it was made readable as let go."
       (should-not (file-exists-p copy))
       (should-not (file-exists-p md)))))
 
+(ert-deftest org-moor-test-keep-copy ()
+  "Sources linked under a heading with only their origins are given copies
+from them: a URL fetched, a path copied; one with a copy is left alone."
+  (org-moor-test--with-source
+    (let* ((sources (org-moor-sources))
+           (page (org-moor-new-source "Wiki" "https://example.com/wiki" 'web sources))
+           (file (org-moor-new-source "Rules again" orig 'file sources)))
+      (goto-char (point-max))
+      (insert (org-moor-link page) "\n" (org-moor-link file) "\n")
+      (goto-char (point-min))
+      (org-moor-test--serving "text/html" nil "<html>wiki</html>"
+        (org-moor-keep-copy (org-moor--records-to-keep))
+        (should (equal fetched "https://example.com/wiki")))
+      (should (equal (plist-get (org-moor-record (plist-get page :id)) :file) "page.html"))
+      (let ((now (org-moor-record (plist-get file :id))))
+        (should (equal (file-name-nondirectory (plist-get now :copy)) "rules.txt"))
+        (should (file-exists-p orig)))
+      (should (equal (plist-get (org-moor-record (plist-get record :id)) :copy) copy)))))
+
 (ert-deftest org-moor-test-set-title ()
   "A source given another title has it in its record, and in the links here
 named by the old one, their places kept."

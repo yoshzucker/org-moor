@@ -748,19 +748,13 @@ it is moved to the source.  For `org-moor-take-url-to', as KEEP."
   (let ((text (ignore-errors (string-trim (org-moor--clipboard)))))
     (and text (string-match-p "\\`https?://[^ \t\n]+\\'" text) text)))
 
-(defun org-moor-take-url-to (url sources &optional title wait keep)
-  "Take URL into SOURCES as a source titled TITLE, and return its record.
-Its copy is kept by KEEP, `org-moor-fetch' when nil, in the background,
-or with WAIT before this returns: called with URL, the source's
+(defun org-moor-fetch-copy (record &optional keep then)
+  "Keep a copy of the source RECORD from its origin, a URL, in the background.
+By KEEP, `org-moor-fetch' when nil: called with the URL, the source's
 directory and a function to call with the copy's name there, or nil.
-TITLE is the file's name, for a URL spelled as one, else the URL, when
-nil.  Nothing is written in Org."
-  (let* ((url (org-moor-url-unwrap url))
-         (name (org-moor-url-file-name url))
-         (title (or title (and name (file-name-sans-extension name)) url))
-         (record (org-moor-new-source title url 'web sources))
-         (done nil))
-    (funcall (or keep #'org-moor-fetch) url (plist-get record :dir)
+THEN, when given, is called once it is kept, or is not."
+  (let ((title (plist-get record :title)))
+    (funcall (or keep #'org-moor-fetch) (plist-get record :origin) (plist-get record :dir)
              (lambda (file)
                (if (not file)
                    (message "%s" (propertize
@@ -769,7 +763,19 @@ nil.  Nothing is written in Org."
                                   'face 'warning))
                  (org-moor-record-set record :file file)
                  (message "Kept %s" title))
-               (setq done t)))
+               (when then (funcall then))))))
+
+(defun org-moor-take-url-to (url sources &optional title wait keep)
+  "Take URL into SOURCES as a source titled TITLE, and return its record.
+Its copy is kept by KEEP in the background, or with WAIT before this
+returns; see `org-moor-fetch-copy'.  TITLE is the file's name, for a URL
+spelled as one, else the URL, when nil.  Nothing is written in Org."
+  (let* ((url (org-moor-url-unwrap url))
+         (name (org-moor-url-file-name url))
+         (title (or title (and name (file-name-sans-extension name)) url))
+         (record (org-moor-new-source title url 'web sources))
+         (done nil))
+    (org-moor-fetch-copy record keep (lambda () (setq done t)))
     (when wait
       (while (not done) (accept-process-output nil 0.1)))
     (or (org-moor-record (plist-get record :id) sources) record)))

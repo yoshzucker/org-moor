@@ -338,6 +338,68 @@ offered."
     (org-moor-record-set record :file name)
     (message "org-moor: %s is the copy of %s" name (plist-get record :title))))
 
+(defun org-moor--records-to-keep ()
+  "Return the sources `org-moor-keep-copy' is about, from where point is.
+Those linked in the region; else the source of the link at point; else
+those the heading at point, or a heading under it, links to."
+  (unless (derived-mode-p 'org-mode)
+    (user-error "org-moor: not in an Org buffer"))
+  (let ((ids (cond ((use-region-p)
+                    (org-moor-ids-in (region-beginning) (region-end)))
+                   ((org-moor-link-at-point) (list (org-moor-link-at-point)))
+                   (t (org-with-wide-buffer
+                       (if (org-before-first-heading-p)
+                           (org-moor-ids-in (point-min) (point-max))
+                         (org-back-to-heading t)
+                         (org-moor-ids-in (point) (save-excursion
+                                                    (org-end-of-subtree t t)
+                                                    (point)))))))))
+    (or (delq nil (mapcar #'org-moor-find-record ids))
+        (user-error "org-moor: no source here"))))
+
+;;;###autoload (autoload 'org-moor-keep-copy "org-moor" nil t)
+(defun org-moor-keep-copy (records)
+  "Keep a copy of each source of RECORDS that has none, from its origin.
+For a source that has only its origin -- taken by an agent, which could
+not fetch it as you, signed in, or whose copy was let go.  A URL is
+fetched as `org-moor-take-url' fetches it, in the background; a path
+still there is moved when it is in `org-moor-move-directories', else
+copied, as taking it would.  A source whose copy is there is left as it
+is; `org-moor-set-copy' replaces a copy.
+Interactively, the sources linked in the region, else the source of the
+link at point, else those the heading links to."
+  (interactive (list (org-moor--records-to-keep)))
+  (let ((had 0))
+    (dolist (record records)
+      (let* ((origin (plist-get record :origin))
+             (path (and origin
+                        (not (string-match-p "\\`https?://" origin))
+                        (expand-file-name (if (string-prefix-p "file:" origin)
+                                              (org-moor-file-url-path origin)
+                                            origin)))))
+        (cond
+         ((plist-get record :copy) (cl-incf had))
+         ((not origin)
+          (message "org-moor: %s has no origin to keep a copy from"
+                   (plist-get record :title)))
+         ((not path) (org-moor-fetch-copy record))
+         ((file-regular-p path)
+          (let ((copy (expand-file-name (file-name-nondirectory path)
+                                        (plist-get record :dir))))
+            (if (org-moor-move-p path)
+                (rename-file path copy t)
+              (copy-file path copy t t))
+            (org-moor-record-set record :file (file-name-nondirectory path))
+            (message "Kept %s" (plist-get record :title))))
+         (t (message "%s" (propertize
+                           (format "org-moor: the origin of %s is gone: %s"
+                                   (plist-get record :title) origin)
+                           'face 'warning))))))
+    (when (use-region-p) (deactivate-mark))
+    (when (= had (length records))
+      (message "org-moor: %s already kept"
+               (if (cdr records) (format "all %d sources are" had) "its copy is")))))
+
 ;;;###autoload (autoload 'org-moor-set-title "org-moor" nil t)
 (defun org-moor-set-title (record title)
   "Give the source RECORD the title TITLE, here and in its record.
