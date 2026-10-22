@@ -47,6 +47,7 @@ org-moor needs [[https://github.com/yoshzucker/org-dock][org-dock]], which takes
              org-moor-noter org-moor-insert-place org-moor-jump
              org-moor-sweep org-moor-set-title org-moor-set-origin
              org-moor-set-copy org-moor-keep-copy)
+  :hook (org-mode . org-moor-eldoc-setup)
   :init
   (with-eval-after-load 'org-protocol
     (org-moor-protocol-setup)))
@@ -118,6 +119,11 @@ its origin -- one an agent took, which fetches as nobody, not as you --
 is given its copy by ~org-moor-keep-copy~, on a link to it, on a heading
 for every source the heading links to, or on a region: a URL is fetched
 again, here, with your cookies, and a path still there is taken.
+Whether a source has its copy is said before the link is followed:
+with point on a link, ~org-moor-eldoc-setup~ on ~org-mode-hook~ has the
+echo area say the copy and its size, or that there is none, and how,
+when and from where the source was taken; the mouse over a link says
+the same.
 
 The settings most worth giving:
 

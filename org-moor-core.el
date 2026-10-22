@@ -561,10 +561,70 @@ From this buffer's sources directory, and the default one."
             (place (org-moor-link-name record place 'text))
             (t (org-moor-link-name record))))))
 
+;;;; What a link has
+
+(defun org-moor-link-summary (path)
+  "Return a line saying what the source of the `moor:' link PATH has.
+Whether it has a copy -- the one thing a link does not show, and the
+one that matters, since without it following the link opens the
+original -- and where it came from, how and when."
+  (pcase-let* ((`(,id . ,_place) (org-moor-link-parse path))
+               (record (org-moor-find-record id)))
+    (if (not record)
+        (propertize (format "moor: no source %s in %s" id
+                            (abbreviate-file-name (org-moor-sources)))
+                    'face 'error)
+      (let* ((file (plist-get record :file))
+             (copy (plist-get record :copy))
+             (origin (plist-get record :origin))
+             (had (string-join
+                   (delq nil (list (plist-get record :via)
+                                   (and (plist-get record :taken)
+                                        (string-trim (plist-get record :taken) "\\[" "\\]"))))
+                   " "))
+             (what (cond
+                    (copy (format "copy %s (%s)" file
+                                  (file-size-human-readable
+                                   (file-attribute-size (file-attributes copy)))))
+                    (file (propertize (format "copy %s is gone" file) 'face 'warning))
+                    (t (propertize "no copy" 'face 'warning)))))
+        (string-join (delq nil (list (concat "moor: " what)
+                                     (and (not (string-empty-p had)) had)
+                                     (or origin (propertize "no origin" 'face 'warning))))
+                     "  ")))))
+
+(defun org-moor--link-path-at (pos)
+  "Return the path of the `moor:' link at POS, without its type, or nil.
+In a property too, where Org does not see a link as one."
+  (save-excursion
+    (goto-char pos)
+    (when (org-in-regexp org-link-bracket-re 1)
+      (let ((link (org-link-unescape (match-string-no-properties 1))))
+        (and (string-prefix-p "moor:" link) (substring link 5))))))
+
+(defun org-moor-link-help-echo (window object pos)
+  "Return what the source of the `moor:' link at POS has, for its tooltip.
+WINDOW, OBJECT and POS are as `help-echo' gives them."
+  (with-current-buffer (if (bufferp object) object (window-buffer window))
+    (when-let* ((path (org-moor--link-path-at pos)))
+      (ignore-errors (org-moor-link-summary path)))))
+
+(defun org-moor-eldoc (&rest _)
+  "Return what the source of the `moor:' link at point has, for ElDoc."
+  (when-let* ((path (org-moor--link-path-at (point))))
+    (ignore-errors (org-moor-link-summary path))))
+
+(defun org-moor-eldoc-setup ()
+  "Say in the echo area what the source of a `moor:' link at point has.
+For `org-mode-hook'."
+  (add-hook 'eldoc-documentation-functions #'org-moor-eldoc nil t)
+  (eldoc-mode 1))
+
 (org-link-set-parameters "moor"
                          :follow #'org-moor-link-follow
                          :complete #'org-moor-link-complete
-                         :insert-description #'org-moor-link-description)
+                         :insert-description #'org-moor-link-description
+                         :help-echo #'org-moor-link-help-echo)
 
 (defconst org-moor--link-re "\\[\\[moor:\\([^]:\n]+\\)\\(?:::\\([^]\n]*\\)\\)?\\]"
   "A `moor:' link's start, its id in group 1 and its place in group 2.")
@@ -582,10 +642,8 @@ In the order they are first linked; a link in a property counts."
 (defun org-moor-link-at-point ()
   "Return the id of the `moor:' link at point, or nil.
 In a property too, where Org does not see a link as one."
-  (when (org-in-regexp org-link-bracket-re 1)
-    (let ((link (org-link-unescape (match-string-no-properties 1))))
-      (and (string-prefix-p "moor:" link)
-           (car (org-moor-link-parse (substring link 5)))))))
+  (when-let* ((path (org-moor--link-path-at (point))))
+    (car (org-moor-link-parse path))))
 
 ;;;; Handed to an agent with a copy
 
@@ -647,9 +705,11 @@ directory of the file the copy's heading is from."
 ;;;###autoload (autoload 'org-moor-link-follow "org-moor")
 ;;;###autoload (autoload 'org-moor-link-complete "org-moor")
 ;;;###autoload (autoload 'org-moor-link-description "org-moor")
+;;;###autoload (autoload 'org-moor-link-help-echo "org-moor")
+;;;###autoload (autoload 'org-moor-eldoc-setup "org-moor")
 ;;;###autoload (autoload 'org-moor-link-file "org-moor")
 ;;;###autoload (autoload 'org-moor-request-text "org-moor")
-;;;###autoload (with-eval-after-load 'ol (org-link-set-parameters "moor" :follow #'org-moor-link-follow :complete #'org-moor-link-complete :insert-description #'org-moor-link-description))
+;;;###autoload (with-eval-after-load 'ol (org-link-set-parameters "moor" :follow #'org-moor-link-follow :complete #'org-moor-link-complete :insert-description #'org-moor-link-description :help-echo #'org-moor-link-help-echo))
 ;;;###autoload (with-eval-after-load 'org-dock (add-hook 'org-dock-link-file-functions #'org-moor-link-file) (add-hook 'org-dock-request-functions #'org-moor-request-text 10))
 
 (provide 'org-moor-core)

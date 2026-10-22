@@ -29,6 +29,25 @@
     (should (equal (org-moor-link record 12 'page) "[[moor:ID::12][Manual p. 12]]"))
     (should (equal (org-moor-link record 123 'line) "[[moor:ID::123][Manual l. 123]]"))))
 
+(ert-deftest org-moor-test-link-says-whether-a-copy-is-kept ()
+  "At a link, the echo area says whether its source has a copy, and its origin."
+  (org-moor-test--with-notes ""
+    (let* ((record (org-moor-new-source "Manual" "https://example.com/m.pdf" 'web))
+           (id (plist-get record :id)))
+      (insert ":PROPERTIES:\n:SEEN: [[moor:" id "][Manual]]\n:END:\n")
+      (search-backward "moor:")
+      (let ((said (org-moor-eldoc)))
+        (should (string-match-p "\\`moor: no copy  web .*  https://example.com/m.pdf\\'" said))
+        (should (eq (get-text-property 6 'face said) 'warning)))
+      (org-moor-record-set record :file "m.pdf")
+      (should (string-match-p "\\`moor: copy m.pdf is gone" (org-moor-eldoc)))
+      (with-temp-file (expand-file-name "m.pdf" (plist-get record :dir)) (insert "pdf"))
+      (should (string-match-p "\\`moor: copy m.pdf (3)  web " (org-moor-eldoc)))
+      (goto-char (point-min))
+      (should-not (org-moor-eldoc))
+      (should (string-match-p "\\`moor: no source nope"
+                              (org-moor-link-summary "nope::3"))))))
+
 (ert-deftest org-moor-test-record-roundtrip ()
   "A new source has a record saying what it is; setting one part of it
 keeps the rest, and what else was written there."
