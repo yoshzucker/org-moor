@@ -429,11 +429,49 @@ it is neither."
     (find-file file)
     (funcall then)))
 
+(defcustom org-moor-office-url-schemes
+  '(("xlsx" . "ms-excel") ("xlsm" . "ms-excel") ("xlsb" . "ms-excel")
+    ("xls" . "ms-excel") ("docx" . "ms-word") ("docm" . "ms-word")
+    ("doc" . "ms-word") ("pptx" . "ms-powerpoint") ("pptm" . "ms-powerpoint")
+    ("ppt" . "ms-powerpoint"))
+  "Office URI schemes, by extension, an http(s) origin is opened with.
+A document on a web server -- a SharePoint library, say -- is opened
+from there in its Office application, as ms-excel:ofe|u|URL, to edit
+and save back, not downloaded by the browser.  nil hands every URL to
+the browser."
+  :type '(alist :key-type (string :tag "Extension")
+                :value-type (string :tag "Scheme"))
+  :group 'org-moor)
+
+(defun org-moor--office-url (url)
+  "Return URL as an Office URI, by `org-moor-office-url-schemes', or nil."
+  (when (string-match "\\`https?://[^?#]*" url)
+    (let ((scheme (cdr (assoc (org-moor-extension
+                               (url-unhex-string (match-string 0 url)))
+                              org-moor-office-url-schemes))))
+      (and scheme (format "%s:ofe|u|%s" scheme url)))))
+
+(declare-function w32-shell-execute "w32fns.c")
+
+(defun org-moor--open-externally (uri)
+  "Open URI as the system does, whatever browser `browse-url' would use."
+  (cond ((eq system-type 'windows-nt) (w32-shell-execute "open" uri))
+        ((eq system-type 'darwin) (call-process "open" nil 0 nil uri))
+        (t (call-process "xdg-open" nil 0 nil uri))))
+
 (defun org-moor--open-origin (origin &optional how)
   "Open ORIGIN: a URL in the browser, a path where it still is.
-HOW is as `org-moor-open-copy' has it, for a path."
+An Office document's URL in its application instead; see
+`org-moor-office-url-schemes'.  HOW is as `org-moor-open-copy' has it,
+for a path."
   (cond ((string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]+:[^\\]" origin)
-         (browse-url origin))
+         ;; Percent-encoded, for a character outside ASCII can be read
+         ;; in another coding on its way to the browser.
+         (let* ((url (url-encode-url origin))
+                (office (org-moor--office-url url)))
+           (if office
+               (org-moor--open-externally office)
+             (browse-url url))))
         ((file-exists-p origin) (org-open-file origin how))
         (t (user-error "org-moor: the origin is gone: %s" origin))))
 

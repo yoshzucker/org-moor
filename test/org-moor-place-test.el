@@ -154,6 +154,26 @@ is; the origin, by its own command."
         (org-moor-open-origin)
         (should (equal opened (list orig nil)))))))
 
+(ert-deftest org-moor-test-open-origin-url-encoded ()
+  "A URL origin reaches the browser percent-encoded, once."
+  (let (opened org-moor-office-url-schemes)
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (setq opened u))))
+      (org-moor--open-origin "https://example.com/Shared Documents/予算.xlsx")
+      (should (equal opened "https://example.com/Shared%20Documents/%E4%BA%88%E7%AE%97.xlsx"))
+      (org-moor--open-origin opened)
+      (should (equal opened "https://example.com/Shared%20Documents/%E4%BA%88%E7%AE%97.xlsx")))))
+
+(ert-deftest org-moor-test-open-origin-office ()
+  "An Office document's URL origin opens in its application, not the browser."
+  (let (browsed opened)
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (setq browsed u)))
+              ((symbol-function 'org-moor--open-externally) (lambda (u) (setq opened u))))
+      (org-moor--open-origin "https://example.com/Shared Documents/予算.XLSX?web=0")
+      (should (equal opened "ms-excel:ofe|u|https://example.com/Shared%20Documents/%E4%BA%88%E7%AE%97.XLSX?web=0"))
+      (should-not browsed)
+      (org-moor--open-origin "https://example.com/view.aspx?file=a.docx")
+      (should (equal browsed "https://example.com/view.aspx?file=a.docx")))))
+
 (ert-deftest org-moor-test-noter-office ()
   "A Word document is read beside its heading as what pandoc makes it,
 and its lines are noted."
