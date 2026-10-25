@@ -87,11 +87,11 @@ drawn, the start of what is selected, or of the line point is on, KIND
    (t (cons (line-number-at-pos (if (use-region-p) (region-beginning) (point)))
             'line))))
 
-(defun org-moor-place-string (record place kind &optional selection)
+(defun org-moor-place-string (record place kind &optional selection alone)
   "Return a link to PLACE of the source RECORD, with SELECTION quoted under it.
 KIND is `page', `line' or `text', what PLACE is; nil PLACE links to the
-source."
-  (concat (org-moor-link record place kind) "\n"
+source.  ALONE names PLACE without the title."
+  (concat (org-moor-link record place kind alone) "\n"
           (if (and selection (not (string-blank-p selection)))
               (concat "#+begin_quote\n"
                       (org-escape-code-in-string (string-trim selection))
@@ -196,8 +196,9 @@ is taken first.  In an org-noter session, `org-noter-insert-note' instead."
                           (org-moor--choose-heading
                            (org-moor-headings-linking (plist-get record :id)))
                           (user-error "org-moor: no heading links to this source")))))))
-      (org-moor--write-in dock (org-moor-place-string record (car place) (cdr place)
-                                                      selection))
+      (org-moor--write-in dock (org-moor-place-string
+                                record (car place) (cdr place) selection
+                                (with-current-buffer dock (org-moor-place-alone-p))))
       (unless (get-buffer-window dock)
         (display-buffer dock '((display-buffer-reuse-window display-buffer-pop-up-window)
                                (inhibit-same-window . t))))

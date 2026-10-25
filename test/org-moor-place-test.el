@@ -43,7 +43,25 @@ by where they lie."
   (let ((record '(:id "ID" :title "Rules")))
     (should (equal (org-moor-place-string record 12 'page) "[[moor:ID::12][Rules p. 12]]\n"))
     (should (equal (org-moor-place-string record 3 'line " * said \n")
-                   "[[moor:ID::3][Rules l. 3]]\n#+begin_quote\n,* said\n#+end_quote\n"))))
+                   "[[moor:ID::3][Rules l. 3]]\n#+begin_quote\n,* said\n#+end_quote\n"))
+    (should (equal (org-moor-place-string record 12 'page nil t) "[[moor:ID::12][p. 12]]\n"))
+    (should (equal (org-moor-place-string record "rule two" 'text nil t)
+                   "[[moor:ID::rule two][“rule two”]]\n"))
+    (should (equal (org-moor-place-string record nil nil nil t) "[[moor:ID][Rules]]\n"))))
+
+(ert-deftest org-moor-test-place-alone-in-a-file-so-said ()
+  "A file `org-moor-place-alone-functions' says so of names a place by
+itself, and tells an agent to; any other, by the title and the place."
+  (let ((org-moor-place-alone-functions
+         (list (lambda (file) (equal (file-name-nondirectory file) "truss.org")))))
+    (should (org-moor-place-alone-p "/x/truss.org"))
+    (should-not (org-moor-place-alone-p "/x/notes.org"))
+    (let ((text (org-moor-request-text '(:origin "/x/truss.org"))))
+      (should (string-search "[[moor:ID::12][p. 12]]" text))
+      (should (string-search "named once" text)))
+    (let ((text (org-moor-request-text '(:origin "/x/notes.org"))))
+      (should (string-search "[[moor:ID::12][TITLE p. 12]]" text))
+      (should-not (string-search "named once" text)))))
 
 (ert-deftest org-moor-test-text-place ()
   "A text place is the start of what was selected, on one line, with no

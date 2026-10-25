@@ -223,7 +223,17 @@ Approval goes to the department head before finance.
 
 Such a link is written as any Org link is: ~C-c C-l~, ~moor:~, and the
 source is chosen by its title, the newest taken first; it is named by the
-title, and a place added after ~::~ by the title and the place.
+title, and a place added after ~::~ by the title and the place.  The name
+is the link's words alone: nothing reads them back, so they may be
+rewritten as you like.
+
+A file that says which source it is once, above the places -- a heading
+naming it, its facts under it -- names a place by itself, ~p. 12~, so the
+title is not said again at every place.  A function in
+~org-moor-place-alone-functions~ says so of such a file: called with its
+name, it returns non-nil.  What org-moor writes there, and tells an agent
+to write, is then ~[[moor:6f1c...::12][p. 12]]~; a link to the source
+itself is still named by its title.
 
 The record is the source's, so it goes where the copy goes, and whatever
 is written about the source in Org can be moved, rewritten or thrown

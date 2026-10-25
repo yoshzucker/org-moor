@@ -536,22 +536,42 @@ than `org-moor-text-place-length'; nil when nothing is left."
           (string-trim-right (substring place 0 org-moor-text-place-length))
         place))))
 
-(defun org-moor-link-name (record &optional place kind)
-  "Return the name of a link to RECORD, or to PLACE in it: its title.
-KIND is `page', `line' or `text', what PLACE is; a text is a string."
-  (let ((title (or (plist-get record :title) "source")))
-    (cond ((stringp place) (format "%s \u201c%s\u201d" title place))
-          (place (format "%s %s %d" title (if (eq kind 'page) "p." "l.") place))
-          (t title))))
+(defvar org-moor-place-alone-functions nil
+  "Functions saying whether a link to a place in an Org file is named by it alone.
+Each is called with the file's name and returns non-nil for a file whose
+links to a place are named \"p. 12\", not \"Manual p. 12\": one that says
+which source it is once, above them, so the title is not said again at
+every place.  A link to the source itself is named by its title either
+way.  A package whose files name a source where its facts begin adds one
+here.")
 
-(defun org-moor-link (record &optional place kind)
+(defun org-moor-place-alone-p (&optional file)
+  "Non-nil when links to a place in FILE are named by the place alone.
+FILE is by default this buffer's Org file; see
+`org-moor-place-alone-functions'."
+  (let ((file (or file (org-moor-org-file))))
+    (and file (run-hook-with-args-until-success 'org-moor-place-alone-functions file))))
+
+(defun org-moor-link-name (record &optional place kind alone)
+  "Return the name of a link to RECORD, or to PLACE in it: its title.
+KIND is `page', `line' or `text', what PLACE is; a text is a string.
+ALONE names PLACE without the title."
+  (let* ((title (or (plist-get record :title) "source"))
+         (where (cond ((stringp place) (format "\u201c%s\u201d" place))
+                      (place (format "%s %d" (if (eq kind 'page) "p." "l.") place)))))
+    (cond ((not where) title)
+          (alone where)
+          (t (concat title " " where)))))
+
+(defun org-moor-link (record &optional place kind alone)
   "Return a link to RECORD, or to PLACE in it, named by the source's title.
 KIND is `page', `line' or `text', what PLACE is.  The name is the title, so that
-which source it is can be read where the link is: no heading says it."
+which source it is can be read where the link is: no heading says it.
+ALONE names PLACE without the title, where something above does."
   (let ((id (plist-get record :id)))
     (org-link-make-string
      (if place (format "moor:%s::%s" id place) (format "moor:%s" id))
-     (org-moor-link-name record place kind))))
+     (org-moor-link-name record place kind alone))))
 
 (defun org-moor-read-source (&optional prompt)
   "Read a source by its title, newest taken first, and return its record.
@@ -587,17 +607,18 @@ From this buffer's sources directory, and the default one."
   (concat "moor:" (plist-get (org-moor-read-source) :id)))
 
 (defun org-moor-link-description (link _description)
-  "Return the name a `moor:' LINK is given: its source's title, and its place."
+  "Return the name a `moor:' LINK is given: its source's title, and its place.
+The place alone, in a file `org-moor-place-alone-p' says so of."
   (pcase-let* ((`(,id . ,place) (org-moor-link-parse (string-remove-prefix "moor:" link)))
                (record (org-moor-find-record id)))
     (when record
-      (cond ((numberp place)
-             (org-moor-link-name record place
-                                 (if (and (plist-get record :copy)
-                                          (org-moor-pdf-p (plist-get record :copy)))
-                                     'page 'line)))
-            (place (org-moor-link-name record place 'text))
-            (t (org-moor-link-name record))))))
+      (org-moor-link-name record place
+                          (cond ((stringp place) 'text)
+                                ((and (plist-get record :copy)
+                                      (org-moor-pdf-p (plist-get record :copy)))
+                                 'page)
+                                (t 'line))
+                          (org-moor-place-alone-p)))))
 
 ;;;; What a link has
 
@@ -720,18 +741,25 @@ FILE-OR-URL and TITLE stand for what is taken and its title; see
 (defun org-moor-request-text (request)
   "Tell an agent how to cite a source, and how to take one in.
 REQUEST is the plist `org-dock-agent-function' gets.  Into the sources
-directory of the file the copy's heading is from."
-  (concat
-   "## Sources\n\n"
-   "When you write something a source says, put a link to its place right\n"
-   "after it:\n\n"
-   "- page 12 of a PDF:            [[moor:ID::12][TITLE p. 12]]\n"
-   "- line 123 of any other file:  [[moor:ID::123][TITLE l. 123]]\n\n"
-   "ID and TITLE are those of the source, as named under Linked files, and a\n"
-   "line is a line of its file there.\n\n"
-   "A file or a web page that is not a source yet is taken in by this\n"
-   "command, which prints a link to it, [[moor:ID][TITLE]]:\n\n"
-   "    " (org-moor-batch-command (org-moor-sources (plist-get request :origin))) "\n"))
+directory of the file the copy's heading is from.  The links to a place
+are named by it alone where `org-moor-place-alone-p' says so of that file."
+  (let* ((origin (plist-get request :origin))
+         (alone (and origin (org-moor-place-alone-p origin)))
+         (title (if alone "" "TITLE ")))
+    (concat
+     "## Sources\n\n"
+     "When you write something a source says, put a link to its place right\n"
+     "after it:\n\n"
+     "- page 12 of a PDF:            [[moor:ID::12][" title "p. 12]]\n"
+     "- line 123 of any other file:  [[moor:ID::123][" title "l. 123]]\n\n"
+     (if alone
+         "The source is named once, above its places, by its title: [[moor:ID][TITLE]].\n"
+       "")
+     "ID and TITLE are those of the source, as named under Linked files, and a\n"
+     "line is a line of its file there.\n\n"
+     "A file or a web page that is not a source yet is taken in by this\n"
+     "command, which prints a link to it, [[moor:ID][TITLE]]:\n\n"
+     "    " (org-moor-batch-command (org-moor-sources origin)) "\n")))
 
 (add-hook 'org-dock-link-file-functions #'org-moor-link-file)
 (add-hook 'org-dock-request-functions #'org-moor-request-text 10)
