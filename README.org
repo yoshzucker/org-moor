@@ -99,15 +99,18 @@ keep behind a sign-in -- a file in a document library, a wiki page as
 the PDF its site exports, a page that only an extension such as
 SingleFile saves whole -- by sending it to a URL that downloads it, or
 typing the extension's shortcut; the copy is taken from the Downloads
-folder once it is there.  Which sites those are is a table of URL
-patterns in ~~/.config/org-moor/front.json~, a row each; a row's ~title~
-is what the site adds to the window's title, taken off.
+folder once it is there.  Which sites those are is
+~~/.config/org-moor/front.json~: under ~sites~, an entry -- one ~{ }~ --
+for each URL pattern.  A URL gets the first entry whose ~match~ fits it,
+and nothing from any other, so what one URL needs -- a ~download~, say,
+and a ~title~ -- is written in the one entry.  An entry's ~title~ is what
+the site adds to the window's title, taken off.
 ~script/org-moor-front.json~ is read while there is none, and is its
 template: ~org-moor-front.ps1 -WriteConfig~ writes it there to be
 changed.  A URL taken in Emacs -- by ~org-moor-take-url~,
-~org-moor-keep-copy~ or an agent -- is looked up in the same rows,
-through ~org-moor-browser-download-function~, in the background: one a
-row gives a download for is opened by ~browse-url~, and its copy taken
+~org-moor-keep-copy~ or an agent -- is looked up in the same entries,
+through ~org-moor-browser-download-function~, in the background: one an
+entry gives a download for is opened by ~browse-url~, and its copy taken
 from the Downloads folder, one download at a time, since a copy there is
 told from another only by when it came.  Keys are typed only from the
 hotkey, while the page is in front.

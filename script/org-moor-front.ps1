@@ -25,12 +25,14 @@
   URL Emacs fetches itself.
 
   Which sites those are is the configuration's, a JSON file at
-  ~/.config/org-moor/front.json ($env:XDG_CONFIG_HOME when set): a row
-  each, its match a regular expression for the URL, and either download,
-  the URL to send the browser to, {name} in it the group of that name in
-  match, or keys, what to type in the browser, in SendKeys' notation --
-  ^+y is Ctrl+Shift+Y; and title, when given, a regular expression for
-  what the site adds to the window's title, which is taken off.  Without
+  ~/.config/org-moor/front.json ($env:XDG_CONFIG_HOME when set): under
+  sites, an entry -- one { } -- each, its match a regular expression for
+  the URL, and either download, the URL to send the browser to, {name} in
+  it the group of that name in match, or keys, what to type in the
+  browser, in SendKeys' notation -- ^+y is Ctrl+Shift+Y; and title, when
+  given, a regular expression for what the site adds to the window's
+  title, which is taken off.  A URL gets the first entry whose match fits
+  it, and nothing from any other.  Without
   it, org-moor-front.json beside this script is read, which is also the
   template:
 
@@ -57,8 +59,8 @@
 
 .PARAMETER Resolve
   A URL to look up instead of reading a window, for Emacs: printed are
-  the URL a browser downloads it from, by the configuration's rows, and
-  the Downloads folder, a line each, or nothing when no row gives a
+  the URL a browser downloads it from, by the configuration's entries, and
+  the Downloads folder, a line each, or nothing when no entry gives a
   download for it.  Nothing is opened.
 #>
 param([long]$Hwnd = 0, [switch]$WriteConfig, [string]$Resolve = '')
@@ -81,7 +83,7 @@ if ($WriteConfig) {
 }
 
 # Sites where a page or a file is behind a sign-in, which only the browser
-# has, are rows of $ConfigFile; see Read-Sites.
+# has, are entries of $ConfigFile; see Read-Sites.
 function Read-Sites {
   $file = if (Test-Path -LiteralPath $ConfigFile) { $ConfigFile } else { $ConfigTemplate }
   try {
@@ -90,20 +92,20 @@ function Read-Sites {
   } catch { return @() }
 }
 
-# For a URL matching a row's match, the browser is made to keep it: it is
-# sent to the row's download, {name} there being the group of that name in
-# match, or sent the row's keys -- SingleFile's shortcut, say -- in the
-# window in front; the row's title is what is taken off the window's title
-# then.  Return the row, its download filled in, or $null.
+# For a URL matching an entry's match, the browser is made to keep it: it is
+# sent to the entry's download, {name} there being the group of that name in
+# match, or sent the entry's keys -- SingleFile's shortcut, say -- in the
+# window in front; the entry's title is what is taken off the window's title
+# then.  Return the first that matches, its download filled in, or $null.
 function Get-BrowserKeep($url) {
-  foreach ($row in Read-Sites) {
-    if ($row.match -and $url -match $row.match) {
+  foreach ($entry in Read-Sites) {
+    if ($entry.match -and $url -match $entry.match) {
       $groups = $Matches.Clone()
-      $download = if ($row.download) {
-        [regex]::Replace($row.download, '\{(\w+)\}',
+      $download = if ($entry.download) {
+        [regex]::Replace($entry.download, '\{(\w+)\}',
           { param($m) [string]$groups[$m.Groups[1].Value] })
       } else { '' }
-      return @{ Download = $download; Keys = [string]$row.keys; Title = [string]$row.title }
+      return @{ Download = $download; Keys = [string]$entry.keys; Title = [string]$entry.title }
     }
   }
   return $null
@@ -118,8 +120,8 @@ function Get-Downloads {
 }
 
 # For Emacs, taking a URL it was given rather than one in front: the URL a
-# browser downloads it from, by the same rows, and where to, a line each;
-# nothing for a URL no row gives a download for.  Keys are not typed, as
+# browser downloads it from, by the same entries, and where to, a line each;
+# nothing for a URL no entry gives a download for.  Keys are not typed, as
 # nothing says the page is in front.
 if ($Resolve) {
   $keep = Get-BrowserKeep $Resolve
