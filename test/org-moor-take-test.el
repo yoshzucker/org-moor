@@ -441,3 +441,139 @@ into the sources of the heading's own file."
         (let ((id (org-moor-test--id-at (org-moor-take-file orig))))
           (should (equal (buffer-string) (format "* Topic [[moor:%s][a]]\n" id)))
           (should (eolp)))))))
+
+(ert-deftest org-moor-test-a-browser-downloads-what-it-is-told-to ()
+  "The browser opens the download, and the copy is looked for where it
+downloads to; with nothing told, Emacs fetches."
+  (let ((opened nil) (looked nil) (fetched nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push u opened)))
+              ((symbol-function 'org-moor-arriving)
+               (lambda (dir _since)
+                 (push dir looked)
+                 (lambda (_url _into done) (funcall done "a.pptx"))))
+              ((symbol-function 'org-moor-fetch)
+               (lambda (url _dir done) (push url fetched) (funcall done nil))))
+      (let ((org-moor-browser-download-function
+             (lambda (url done)
+               (funcall done (and (string-match-p "files" url)
+                                  (cons "https://files.example.com/get?id=1" "/dl"))))))
+        (org-moor-browser-or-fetch "https://files.example.com/view?id=1" "/s"
+                                   (lambda (name) (should (equal name "a.pptx"))))
+        (should (equal opened '("https://files.example.com/get?id=1")))
+        (should (equal looked '("/dl")))
+        (org-moor-browser-or-fetch "https://example.com/a" "/s" #'ignore)
+        (should (equal fetched '("https://example.com/a"))))
+      (let ((org-moor-browser-download-function nil))
+        (org-moor-browser-or-fetch "https://files.example.com/view?id=2" "/s" #'ignore)
+        (should (equal fetched '("https://files.example.com/view?id=2"
+                                 "https://example.com/a")))
+        (should (equal (length opened) 1))))))
+
+(ert-deftest org-moor-test-a-failed-lookup-still-ends ()
+  "When taking the copy fails after the lookup, DONE is still called."
+  (let ((result 'unset) (org-moor--browser-queue nil) (org-moor--browser-busy nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (&rest _) (error "No browser"))))
+      (let ((org-moor-browser-download-function
+             (lambda (_url done) (funcall done (cons "https://x/get" "/dl")))))
+        (org-moor-browser-or-fetch "https://x/view" "/s" (lambda (n) (setq result n)))
+        (should-not result)
+        (should-not org-moor--browser-busy)))))
+
+(ert-deftest org-moor-test-browser-downloads-one-at-a-time ()
+  "The next download is opened only once the one before has come."
+  (let ((opened nil) (waiting nil) (got nil)
+        (org-moor--browser-queue nil) (org-moor--browser-busy nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push u opened)))
+              ((symbol-function 'org-moor-arriving)
+               (lambda (_dir _since)
+                 (lambda (_url _into done) (setq waiting done)))))
+      (let ((org-moor-browser-download-function
+             (lambda (url done) (funcall done (cons (concat url "/get") "/dl")))))
+        (org-moor-browser-or-fetch "https://x/1" "/s" (lambda (n) (push n got)))
+        (org-moor-browser-or-fetch "https://x/2" "/s" (lambda (n) (push n got)))
+        (should (equal opened '("https://x/1/get")))
+        (funcall waiting "one.pdf")
+        (should (equal opened '("https://x/2/get" "https://x/1/get")))
+        (funcall waiting "two.pdf")
+        (should (equal got '("two.pdf" "one.pdf")))
+        (should-not org-moor--browser-busy)))))
+
+(ert-deftest org-moor-test-front-download-that-cannot-start ()
+  "When PowerShell cannot be started, the URL is fetched."
+  (let ((got 'unset)
+        (org-moor-script-directory (make-temp-file "moor" t)))
+    (with-temp-file (expand-file-name "org-moor-front.ps1" org-moor-script-directory))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest _) (signal 'file-missing '("Searching" "powershell.exe")))))
+      (org-moor-front-download "https://x/view" (lambda (how) (setq got how)))
+      (should (null got)))
+    (delete-directory org-moor-script-directory t)))
+
+(ert-deftest org-moor-test-front-download-asks-in-the-background ()
+  "The script is run as a process; its two lines come back to DONE."
+  (let ((got 'unset)
+        (org-moor-script-directory (make-temp-file "moor" t)))
+    (with-temp-file (expand-file-name "org-moor-front.ps1" org-moor-script-directory))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (should (member "-Resolve" (plist-get args :command)))
+                 (let ((buf (plist-get args :buffer)))
+                   (with-current-buffer buf (insert "https://x/get\r\nC:\\dl\r\n"))
+                   (cl-letf (((symbol-function 'process-live-p) #'ignore)
+                             ((symbol-function 'process-buffer) (lambda (_) buf)))
+                     (funcall (plist-get args :sentinel) 'proc "finished\n"))))))
+      (org-moor-front-download "https://x/view" (lambda (how) (setq got how)))
+      (should (equal got '("https://x/get" . "C:\\dl"))))))
+
+(ert-deftest org-moor-test-protocol-does-not-look-up-again ()
+  "A URL from outside has been looked up there: Emacs fetches it."
+  (let ((asked nil) (keep nil))
+    (cl-letf (((symbol-function 'select-frame-set-input-focus) #'ignore)
+              ((symbol-function 'org-moor-take-url)
+               (lambda (_url _title _pick k) (setq keep k))))
+      (let ((org-moor-browser-download-function (lambda (_) (setq asked t) nil)))
+        (org-moor-protocol '(:url "https://x.com/a"))
+        (should (eq keep #'org-moor-fetch))
+        (should-not asked)))))
+
+(ert-deftest org-moor-test-agent-take-returns-the-link-at-once ()
+  (let* ((dir (make-temp-file "moor" t))
+         (file (expand-file-name "a.txt" dir))
+         (fetched nil))
+    (with-temp-file file (insert "a"))
+    (cl-letf (((symbol-function 'org-moor-fetch-copy)
+               (lambda (record &rest _) (setq fetched (plist-get record :origin)))))
+      (should (string-match-p "\\`\\[\\[moor:[^]]+\\]\\[Page\\]\\]\\'"
+                              (org-moor-agent-take dir "https://x.com/p" "Page")))
+      (should (equal fetched "https://x.com/p"))
+      (should (string-match-p "\\[a\\]\\]\\'" (org-moor-agent-take dir file))))
+    (should-error (org-moor-agent-take dir (expand-file-name "none" dir)))
+    (delete-directory dir t)))
+
+(ert-deftest org-moor-test-batch-command-by-the-server ()
+  "While the server runs, the command names it; the agent fills in the same."
+  (cl-letf (((symbol-function 'org-moor--server-file) (lambda () "/run/emacs/server")))
+    (should (string-match-p
+             "-f org-moor-batch-take --server=/run/emacs/server /tmp/s FILE-OR-URL TITLE\\'"
+             (org-moor-batch-command "/tmp/s/"))))
+  (cl-letf (((symbol-function 'org-moor--server-file) #'ignore))
+    (should (string-match-p "-f org-moor-batch-take /tmp/s FILE-OR-URL TITLE\\'"
+                            (org-moor-batch-command "/tmp/s/")))))
+
+(ert-deftest org-moor-test-batch-take-by-the-server ()
+  "The server's Emacs takes it; when it cannot be reached, it is taken here."
+  (let* ((dir (make-temp-file "moor" t))
+         (file (expand-file-name "a.txt" dir))
+         (asked nil))
+    (with-temp-file file (insert "a"))
+    (cl-letf (((symbol-function 'org-moor--ask-server)
+               (lambda (server form) (setq asked (list server form)) "[[moor:x][a]]")))
+      (let ((command-line-args-left (list "--server=/run/s" dir file)))
+        (should (equal (with-output-to-string (org-moor-batch-take)) "[[moor:x][a]]\n"))
+        (should (equal asked `("/run/s" (org-moor-agent-take ,dir ,file nil))))))
+    (cl-letf (((symbol-function 'org-moor--ask-server)
+               (lambda (&rest _) (signal 'file-error '("Cannot reach Emacs")))))
+      (let ((command-line-args-left (list "--server=/run/s" dir file)))
+        (should (string-match-p "\\`\\[\\[moor:[^]]+\\]\\[a\\]\\]\n\\'"
+                                (with-output-to-string (org-moor-batch-take))))))
+    (delete-directory dir t)))

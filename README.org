@@ -77,10 +77,10 @@ On Windows, a PowerPoint, Word or Excel document opened from the web is
 saved as a copy by the app itself, which is taken with its URL as the
 origin.  A message in Outlook -- open in its window, or selected in the
 list -- is saved as a ~.msg~ and taken.  A file open in a browser is
-taken as the file: one on disk by its path, and one in SharePoint or
-OneDrive -- PowerPoint for the web, a PDF in its viewer -- by having the
-browser, which is signed in, download it; Emacs asks for the title
-meanwhile, and takes the file from the Downloads folder once it is
+taken as the file: one on disk by its path, and one in a document
+library on the web -- PowerPoint for the web, a PDF in its viewer -- by
+having the browser, which is signed in, download it; Emacs asks for the
+title meanwhile, and takes the file from the Downloads folder once it is
 whole, its URL kept as the origin.
 
 What a URL is, Emacs tells by what it sends, not by how it is spelled: a
@@ -89,20 +89,35 @@ under the name the server gives it, else its URL's, with the extension
 its type has.  A page sent where a file was asked for, as a sign-in page
 is, is not kept.
 
-A page behind a sign-in -- a wiki, Confluence -- is fetched as you when
+A page behind a sign-in -- a wiki, an intranet -- is fetched as you when
 ~org-moor-cookie-file~ holds your browser's cookies, written out in the
 cookies.txt format by a browser extension; curl and monolith are both
 given them.  Cookies run out, so the file is to be written again now and
 then, and kept where only you can read it, since it is your sign-in.
 On Windows, the script asks the browser itself to keep what some sites
-keep behind a sign-in -- a file in SharePoint, a Confluence page as a
-PDF, a page that only an extension such as SingleFile saves whole -- by
-sending it to a URL that downloads it, or typing the extension's
-shortcut; the copy is taken from the Downloads folder once it is there.
-Which sites those are is a table of URL patterns in
-~~/.config/org-moor/front.json~, a row each.  ~script/org-moor-front.json~
-is read while there is none, and is its template:
-~org-moor-front.ps1 -WriteConfig~ writes it there to be changed.
+keep behind a sign-in -- a file in a document library, a wiki page as
+the PDF its site exports, a page that only an extension such as
+SingleFile saves whole -- by sending it to a URL that downloads it, or
+typing the extension's shortcut; the copy is taken from the Downloads
+folder once it is there.  Which sites those are is a table of URL
+patterns in ~~/.config/org-moor/front.json~, a row each; a row's ~title~
+is what the site adds to the window's title, taken off.
+~script/org-moor-front.json~ is read while there is none, and is its
+template: ~org-moor-front.ps1 -WriteConfig~ writes it there to be
+changed.  A URL taken in Emacs -- by ~org-moor-take-url~,
+~org-moor-keep-copy~ or an agent -- is looked up in the same rows,
+through ~org-moor-browser-download-function~, in the background: one a
+row gives a download for is opened by ~browse-url~, and its copy taken
+from the Downloads folder, one download at a time, since a copy there is
+told from another only by when it came.  Keys are typed only from the
+hotkey, while the page is in front.
+
+An agent working on a heading taken out by org-dock is told a command
+that takes a source in.  While the server of the Emacs you work in is
+running, the command has that Emacs take it, so that a URL is fetched as
+you would fetch it, the link coming back at once and the copy after;
+otherwise, or when it cannot be reached, a batch Emacs takes it, and
+fetches as nobody.
 
 Following a link opens the source's copy as a ~file:~ link to it would
 be opened: as ~org-file-apps~ says, in Emacs with ~C-u~, and in the
@@ -201,7 +216,7 @@ sources/6f/1c.../manual.pdf
 sources/6f/1c.../moor.org
 
 :PROPERTIES:
-:MOOR_ORIGIN: https://example.sharepoint.com/.../manual.pdf
+:MOOR_ORIGIN: https://files.example.com/.../manual.pdf
 :MOOR_VIA:    chat
 :MOOR_FILE:   manual.pdf
 :MOOR_TAKEN:  [2026-10-17 Sat 10:12]
@@ -350,7 +365,7 @@ is told which sources they are, and to cite a place as the links here do.
 ~org-moor-open-source~, on a heading, opens the copy of a source it, or a
 heading under it, links to, the prefix as for a link;
 ~org-moor-open-origin~, where it came from.  A URL opens in the browser,
-but a Word, Excel or PowerPoint document on a web server -- a SharePoint
+but a Word, Excel or PowerPoint document on a web server -- a document
 library -- opens from there in its Office application, by the Office URI
 schemes ~org-moor-office-url-schemes~ names, rather than being
 downloaded.

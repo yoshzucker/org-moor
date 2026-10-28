@@ -743,6 +743,100 @@ it is moved to the source.  For `org-moor-take-url-to', as KEEP."
                           (message "org-moor: %s" (error-message-string err))
                           (funcall done nil))))))))))
 
+;; A file behind a sign-in that only the browser has can be downloaded by
+;; the browser, from a URL that says to: where the script for the document
+;; in front has a browser keep it, see script/org-moor-front.ps1.  A URL
+;; taken in Emacs is kept the same way, by the same configuration, which
+;; the script is asked about.
+
+(defconst org-moor-script-directory
+  (expand-file-name "script" (file-name-directory (or load-file-name buffer-file-name)))
+  "The package's scripts.")
+
+(defun org-moor-front-download (url done)
+  "Call DONE with how a browser downloads URL, as script/org-moor-front.ps1 says.
+With nil, when the script says none, or cannot be asked.  What it writes
+as errors is not read.  See `org-moor-browser-download-function'."
+  (let ((script (expand-file-name "org-moor-front.ps1" org-moor-script-directory))
+        (out (generate-new-buffer " *org-moor-resolve*"))
+        (err (generate-new-buffer " *org-moor-resolve-errors*")))
+    (unless (and (file-readable-p script)
+                 (ignore-errors
+                   (make-process
+                    :name "org-moor-resolve"
+                    :buffer out
+                    :stderr err
+                    :command `("powershell.exe" "-NoProfile" "-ExecutionPolicy" "Bypass"
+                               "-File" ,script "-Resolve" ,url)
+                    :coding 'utf-8
+                    :noquery t
+                    :sentinel
+                    (lambda (proc _event)
+                      (unless (process-live-p proc)
+                        (let ((lines (with-current-buffer out
+                                       (split-string (buffer-string) "\r?\n" t))))
+                          (kill-buffer out)
+                          (when-let* ((errors (get-buffer-process err)))
+                            (delete-process errors))
+                          (kill-buffer err)
+                          (funcall done (pcase lines
+                                          (`(,download ,dir) (cons download dir))))))))))
+      (kill-buffer out)
+      (kill-buffer err)
+      (funcall done nil))))
+
+(defcustom org-moor-browser-download-function
+  (and (eq system-type 'windows-nt) #'org-moor-front-download)
+  "Function telling how a browser downloads a URL's copy, or nil.
+Called with a URL and a function it calls, once it knows, with
+\(DOWNLOAD . DIR), the URL a browser signed in downloads the copy from
+and the directory it downloads into, or with nil when the URL is fetched
+as `org-moor-fetch' fetches it.  DOWNLOAD is opened by `browse-url'.  On
+Windows, the script for the document in front is asked, by the
+configuration it keeps sites in."
+  :type '(choice function (const nil))
+  :group 'org-moor)
+
+(defvar org-moor--browser-queue nil
+  "Downloads waiting for the browser, each (DOWNLOAD DIR URL INTO DONE).")
+
+(defvar org-moor--browser-busy nil
+  "Non-nil while a download by the browser is awaited.")
+
+(defun org-moor--browser-next ()
+  "Have the browser download the next copy queued, when none is awaited.
+One at a time, since a copy is told from another only by when it came."
+  (unless org-moor--browser-busy
+    (when-let* ((next (pop org-moor--browser-queue)))
+      (pcase-let ((`(,download ,dir ,url ,into ,done) next))
+        (setq org-moor--browser-busy t)
+        (let ((finish (lambda (name)
+                        (setq org-moor--browser-busy nil)
+                        (unwind-protect (funcall done name)
+                          (org-moor--browser-next)))))
+          (condition-case err
+              (let ((since (current-time)))
+                (browse-url download)
+                (funcall (org-moor-arriving dir since) url into finish))
+            (error (message "org-moor: %s" (error-message-string err))
+                   (funcall finish nil))))))))
+
+(defun org-moor-browser-or-fetch (url dir done)
+  "Keep a copy of URL in DIR, then call DONE with its name, or nil.
+By a browser when `org-moor-browser-download-function' tells one how,
+the copy taken as `org-moor-arriving' takes one, after any it is already
+downloading; else by `org-moor-fetch'."
+  (if (not org-moor-browser-download-function)
+      (org-moor-fetch url dir done)
+    (funcall org-moor-browser-download-function url
+             (lambda (how)
+               (if (not how)
+                   (org-moor-fetch url dir done)
+                 (setq org-moor--browser-queue
+                       (append org-moor--browser-queue
+                               (list (list (car how) (cdr how) url dir done))))
+                 (org-moor--browser-next))))))
+
 (defun org-moor--clipboard-url ()
   "Return the clipboard's text when it is a URL, or nil."
   (let ((text (ignore-errors (string-trim (org-moor--clipboard)))))
@@ -750,11 +844,13 @@ it is moved to the source.  For `org-moor-take-url-to', as KEEP."
 
 (defun org-moor-fetch-copy (record &optional keep then)
   "Keep a copy of the source RECORD from its origin, a URL, in the background.
-By KEEP, `org-moor-fetch' when nil: called with the URL, the source's
-directory and a function to call with the copy's name there, or nil.
+By KEEP: called with the URL, the source's directory and a function to
+call with the copy's name there, or nil; when nil,
+`org-moor-browser-or-fetch'.
 THEN, when given, is called once it is kept, or is not."
-  (let ((title (plist-get record :title)))
-    (funcall (or keep #'org-moor-fetch) (plist-get record :origin) (plist-get record :dir)
+  (let ((title (plist-get record :title))
+        (url (plist-get record :origin)))
+    (funcall (or keep #'org-moor-browser-or-fetch) url (plist-get record :dir)
              (lambda (file)
                (if (not file)
                    (message "%s" (propertize
@@ -800,28 +896,80 @@ the link."
 
 ;;;; From outside Emacs
 
+(defun org-moor--take-what (what sources title &optional wait)
+  "Take WHAT, a file or a URL, into SOURCES as a source titled TITLE.
+Return its record.  A file is copied, never moved, and titled by its
+name unless TITLE is given; a URL's copy is kept with WAIT before this
+returns, else after."
+  (let ((sources (file-name-as-directory (expand-file-name sources))))
+    (if (string-match-p "\\`https?://" what)
+        (org-moor-take-url-to what sources title wait)
+      (unless (file-regular-p what)
+        (error "org-moor: not a file: %s" what))
+      (org-moor-take-file-to what sources title))))
+
+(defvar server-use-tcp)
+(defvar server-auth-dir)
+(defvar server-socket-dir)
+(declare-function server-eval-at "server" (server form))
+
+(defun org-moor--ask-server (file form)
+  "Return what FORM comes to in the Emacs whose server is FILE.
+Signal `file-error' when it cannot be reached.  FILE is the server's
+socket, or its authentication file when it is reached by TCP."
+  (require 'server)
+  (let ((server-use-tcp (file-regular-p file))
+        (server-auth-dir (file-name-directory file))
+        (server-socket-dir (file-name-directory file)))
+    (condition-case err
+        (server-eval-at (file-name-nondirectory file) form)
+      (server-return-invalid-read-syntax (signal (car err) (cdr err)))
+      (error (signal 'file-error (list "Cannot reach Emacs" file
+                                       (error-message-string err)))))))
+
 (defun org-moor-batch-take ()
   "Take a file or a web page into a sources directory, and print a link to it.
 For an agent, which cannot ask Emacs:
 
   emacs --batch -L DIR -L ORG-DOCK-DIR -l org-moor \\
-        -f org-moor-batch-take SOURCES FILE-OR-URL [TITLE]
+        -f org-moor-batch-take [--server=FILE] SOURCES FILE-OR-URL [TITLE]
 
 SOURCES is the sources directory; a file is copied, never moved, and
 titled by its name unless TITLE is given.  What is printed is a link to
-the source named by its title, [[moor:ID][TITLE]]."
-  (let* ((sources (file-name-as-directory
-                   (expand-file-name (or (pop command-line-args-left)
-                                         (error "org-moor: no sources directory")))))
+the source named by its title, [[moor:ID][TITLE]].
+
+With --server, the Emacs whose server FILE is takes it, by
+`org-moor-agent-take', so that a URL is fetched as the user would fetch
+it, by the browser among the ways, the link printed at once and the copy
+kept after.  Without it, or when that Emacs cannot be reached, a URL is
+fetched here, as nobody, before the link is printed."
+  (let* ((server (and command-line-args-left
+                      (string-prefix-p "--server=" (car command-line-args-left))
+                      (substring (pop command-line-args-left) (length "--server="))))
+         (sources (expand-file-name (or (pop command-line-args-left)
+                                        (error "org-moor: no sources directory"))))
          (what (or (pop command-line-args-left)
                    (error "org-moor: no file or URL to take")))
+         (what (if (string-match-p "\\`https?://" what) what (expand-file-name what)))
          (title (pop command-line-args-left))
-         (record (if (string-match-p "\\`https?://" what)
-                     (org-moor-take-url-to what sources title t)
-                   (unless (file-regular-p what)
-                     (error "org-moor: not a file: %s" what))
-                   (org-moor-take-file-to what sources title))))
-    (princ (concat (org-moor-link record) "\n"))))
+         (link (or (and server
+                        (condition-case err
+                            (or (org-moor--ask-server
+                                 server `(org-moor-agent-take ,sources ,what ,title))
+                                (error "org-moor: Emacs did not take %s" what))
+                          (file-error
+                           (message "org-moor: %s; taken here" (error-message-string err))
+                           nil)))
+                   (let ((org-moor-browser-download-function nil))
+                     (org-moor-link (org-moor--take-what what sources title t))))))
+    (princ (concat link "\n"))))
+
+(defun org-moor-agent-take (sources what &optional title)
+  "Take WHAT, a file or a URL, into SOURCES, and return a link to it.
+For `org-moor-batch-take' --server, in the Emacs the user works in: a
+URL's copy is kept as a URL taken here is, after the link is returned,
+so that the agent is not kept waiting.  The link is [[moor:ID][TITLE]]."
+  (org-moor-link (org-moor--take-what what sources title)))
 
 ;;;; org-protocol
 
@@ -859,11 +1007,14 @@ heading is picked.  Emacs is brought to the front to ask."
                               (plist-get info :origin))))
        (url (org-moor-take-url
              url title nil
-             (when-let* ((dir (plist-get info :arriving)))
-               (org-moor-arriving
-                dir (if-let* ((since (plist-get info :since)))
-                        (seconds-to-time (string-to-number since))
-                      (current-time))))))
+             ;; What arrives here has been looked up already, by the
+             ;; script for the document in front, or it is from a page.
+             (if-let* ((dir (plist-get info :arriving)))
+                 (org-moor-arriving
+                  dir (if-let* ((since (plist-get info :since)))
+                          (seconds-to-time (string-to-number since))
+                        (current-time)))
+               #'org-moor-fetch)))
        (t (message "org-moor: protocol URL had no url= or path=")))))
   nil)
 

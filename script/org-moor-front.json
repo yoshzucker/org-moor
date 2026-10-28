@@ -1,22 +1,18 @@
 {
   "sites": [
     {
-      "note": "PowerPoint, Word or Excel for the web, showing a file by its id.",
-      "match": "^https://(?<host>[^/]+\\.sharepoint\\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]sourcedoc=(%7B|\\{)?(?<id>[0-9a-fA-F-]{36})",
-      "download": "https://{host}{site}/_layouts/15/download.aspx?UniqueId={id}"
+      "note": "An example: a file viewer showing a file by its id, which the browser downloads from the site's download URL.  Give it your site.",
+      "match": "^https://files\\.example\\.com/view\\?id=(?<id>[^&#]+)",
+      "download": "https://files.example.com/download?id={id}"
     },
     {
-      "note": "A library's viewer -- a PDF, say -- showing a file by its path.",
-      "match": "^https://(?<host>[^/]+\\.sharepoint\\.com)(/:[a-z]:/[a-z])?(?<site>/(sites|teams|personal)/[^/?]+)?/.*[?&]id=(?<path>[^&#]+(\\.|%2[Ee])\\w+)(&|#|$)",
-      "download": "https://{host}{site}/_layouts/15/download.aspx?SourceUrl={path}"
+      "note": "An example: a wiki page the site exports as a PDF, its name taken off the window's title.  Give it your site.",
+      "match": "^https://wiki\\.example\\.com/pages/(?<id>\\d+)",
+      "download": "https://wiki.example.com/export/pdf?page={id}",
+      "title": " - Example Wiki$"
     },
     {
-      "note": "A Confluence Cloud page, as a PDF.",
-      "match": "^https://(?<host>[^/]+\\.atlassian\\.net)/wiki/(spaces/[^/]+/pages/(edit-v2/)?|.*[?&]pageId=)(?<id>\\d+)",
-      "download": "https://{host}/wiki/spaces/flyingpdf/pdfpageexport.action?pageId={id}"
-    },
-    {
-      "note": "A page only the browser can see whole, saved by SingleFile's shortcut, Ctrl+Shift+Y.  An example: give it your site.",
+      "note": "An example: a page only the browser can see whole, saved by SingleFile's shortcut, Ctrl+Shift+Y.  Give it your site.",
       "match": "^https://intranet\\.example\\.com/",
       "keys": "^+y"
     }

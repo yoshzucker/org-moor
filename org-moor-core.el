@@ -435,7 +435,7 @@ it is neither."
     ("doc" . "ms-word") ("pptx" . "ms-powerpoint") ("pptm" . "ms-powerpoint")
     ("ppt" . "ms-powerpoint"))
   "Office URI schemes, by extension, an http(s) origin is opened with.
-A document on a web server -- a SharePoint library, say -- is opened
+A document on a web server -- in a document library, say -- is opened
 from there in its Office application, as ms-excel:ofe|u|URL, to edit
 and save back, not downloaded by the browser.  nil hands every URL to
 the browser."
@@ -726,16 +726,31 @@ Nil when the source has no copy."
                copy))
             (format "moor:%s  %s" (plist-get record :id) (or (plist-get record :title) "")))))))
 
+(defvar server-process)
+(defvar server-name)
+(defvar server-use-tcp)
+(defvar server-auth-dir)
+(defvar server-socket-dir)
+
+(defun org-moor--server-file ()
+  "Return this Emacs's server, its socket or its authentication file, or nil.
+Nil when the server is not running."
+  (and (boundp 'server-process) (process-live-p server-process)
+       (expand-file-name server-name (if server-use-tcp server-auth-dir server-socket-dir))))
+
 (defun org-moor-batch-command (sources)
   "Return the command line that takes a source into SOURCES, as this Emacs runs it.
 FILE-OR-URL and TITLE stand for what is taken and its title; see
-`org-moor-batch-take'."
+`org-moor-batch-take'.  While this Emacs's server is running, the command
+has it take the source."
   (let ((dir-of (lambda (library)
                   (shell-quote-argument
-                   (directory-file-name (file-name-directory (locate-library library))) t))))
-    (format "%s --batch -L %s -L %s -l org-moor -f org-moor-batch-take %s FILE-OR-URL TITLE"
+                   (directory-file-name (file-name-directory (locate-library library))) t)))
+        (server (org-moor--server-file)))
+    (format "%s --batch -L %s -L %s -l org-moor -f org-moor-batch-take %s%s FILE-OR-URL TITLE"
             (shell-quote-argument (expand-file-name invocation-name invocation-directory) t)
             (funcall dir-of "org-moor") (funcall dir-of "org-dock")
+            (if server (concat "--server=" (shell-quote-argument server t) " ") "")
             (shell-quote-argument (directory-file-name (expand-file-name sources)) t))))
 
 (defun org-moor-request-text (request)
@@ -759,7 +774,10 @@ are named by it alone where `org-moor-place-alone-p' says so of that file."
      "line is a line of its file there.\n\n"
      "A file or a web page that is not a source yet is taken in by this\n"
      "command, which prints a link to it, [[moor:ID][TITLE]]:\n\n"
-     "    " (org-moor-batch-command (org-moor-sources origin)) "\n")))
+     "    " (org-moor-batch-command (org-moor-sources origin)) "\n"
+     (if (org-moor--server-file)
+         "\nA web page's copy arrives after the link, so read it a little later.\n"
+       ""))))
 
 (add-hook 'org-dock-link-file-functions #'org-moor-link-file)
 (add-hook 'org-dock-request-functions #'org-moor-request-text 10)
