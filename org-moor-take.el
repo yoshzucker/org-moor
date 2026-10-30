@@ -79,9 +79,11 @@ The target is a marker at a heading, a file (its top level), or `inbox'."
      ((assoc answer table) (org-moor--target-at (assoc answer table)))
      ((and (string-match "\\`\\(.*\\)/\\([^/]+\\)\\'" answer)
            (assoc (match-string 1 answer) table))
-      (org-moor-insert-heading
-       (org-moor--target-at (assoc (match-string 1 answer) table))
-       (match-string 2 answer)))
+      ;; Its name is read first: visiting the parent's file may change the
+      ;; match data, as it does on Windows.
+      (let ((parent (assoc (match-string 1 answer) table))
+            (name (match-string 2 answer)))
+        (org-moor-insert-heading (org-moor--target-at parent) name)))
      (t (org-moor-insert-heading 'inbox answer)))))
 
 (defun org-moor--target (pick)
@@ -296,12 +298,13 @@ AppleScript, and Windows's through PowerShell, when Emacs had nothing."
                     "-e" "close access f"
                     "-e" "end try"))
      ((and (eq system-type 'windows-nt) (executable-find "powershell"))
-      (call-process "powershell" nil nil nil "-NoProfile" "-Command"
-                    (concat "Add-Type -AssemblyName System.Windows.Forms;"
-                            "$i = [Windows.Forms.Clipboard]::GetImage();"
-                            "if ($i) { $i.Save('"
-                            (replace-regexp-in-string "'" "''" (convert-standard-filename file))
-                            "', [Drawing.Imaging.ImageFormat]::Png) }")))))
+      (let ((coding-system-for-write (org-moor-argument-coding)))
+        (call-process "powershell" nil nil nil "-NoProfile" "-Command"
+                      (concat "Add-Type -AssemblyName System.Windows.Forms;"
+                              "$i = [Windows.Forms.Clipboard]::GetImage();"
+                              "if ($i) { $i.Save('"
+                              (replace-regexp-in-string "'" "''" (convert-standard-filename file))
+                              "', [Drawing.Imaging.ImageFormat]::Png) }"))))))
   (if (and (file-exists-p file) (> (file-attribute-size (file-attributes file)) 0))
       file
     (when (file-exists-p file) (delete-file file))
@@ -509,8 +512,9 @@ nobody, and gets a sign-in page."
     (make-process
      :name "org-moor-snapshot"
      :buffer " *org-moor-snapshot*"
+     :coding (cons 'utf-8 (org-moor-argument-coding))
      :command `(,org-moor-monolith-program "-s" ,@(org-moor--cookie-args "-C")
-                "-o" ,file ,url)
+                "-o" ,file ,(url-encode-url url))
      :sentinel (lambda (proc _event)
                  (unless (process-live-p proc)
                    (funcall done (and (zerop (process-exit-status proc))
@@ -627,12 +631,15 @@ Content-Disposition names it, else as its URL is spelled, else
           (t (concat name "." ext)))))
 
 (defun org-moor--curl (url file done)
-  "Fetch URL to FILE by curl; call DONE with success, type and disposition."
+  "Fetch URL to FILE by curl; call DONE with success, type and disposition.
+What it prints, the headers, is read as UTF-8, as a name in them is sent."
   (make-process
    :name "org-moor-fetch"
    :buffer (generate-new-buffer " *org-moor-fetch*")
+   :coding (cons 'utf-8 (org-moor-argument-coding))
    :command `(,org-moor-curl-program "-fsSL" ,@(org-moor--cookie-args "-b")
-              "-o" ,file "-w" "%{content_type}\\n%header{content-disposition}" ,url)
+              "-o" ,file "-w" "%{content_type}\\n%header{content-disposition}"
+              ,(url-encode-url url))
    :sentinel (lambda (proc _event)
                (unless (process-live-p proc)
                  (let ((lines (with-current-buffer (process-buffer proc)
@@ -768,7 +775,7 @@ as errors is not read.  See `org-moor-browser-download-function'."
                     :stderr err
                     :command `("powershell.exe" "-NoProfile" "-ExecutionPolicy" "Bypass"
                                "-File" ,script "-Resolve" ,url)
-                    :coding 'utf-8
+                    :coding (cons 'utf-8 (org-moor-argument-coding))
                     :noquery t
                     :sentinel
                     (lambda (proc _event)
@@ -900,8 +907,12 @@ the link."
   "Take WHAT, a file or a URL, into SOURCES as a source titled TITLE.
 Return its record.  A file is copied, never moved, and titled by its
 name unless TITLE is given; a URL's replica is kept with WAIT before this
-returns, else after."
-  (let ((sources (file-name-as-directory (expand-file-name sources))))
+returns, else after.  The directory SOURCES is in must be there
+already: a name mangled on the way in is not made into a tree of its own."
+  (let* ((sources (file-name-as-directory (expand-file-name sources)))
+         (parent (file-name-directory (directory-file-name sources))))
+    (unless (file-directory-p parent)
+      (error "org-moor: not a directory: %s" parent))
     (if (string-match-p "\\`https?://" what)
         (org-moor-take-url-to what sources title wait)
       (unless (file-regular-p what)
@@ -916,13 +927,25 @@ returns, else after."
 (defun org-moor--ask-server (file form)
   "Return what FORM comes to in the Emacs whose server is FILE.
 Signal `file-error' when it cannot be reached.  FILE is the server's
-socket, or its authentication file when it is reached by TCP."
+socket, or its authentication file when it is reached by TCP.
+
+FORM goes, and what it comes to comes back, printed in ASCII alone.
+`server-eval-at' sends its bytes as they are, the server decodes them by
+its `file-name-coding-system', and the answer is decoded as
+`emacs-internal': where that coding is not UTF-8, as cp932 is, a name
+that is not ASCII would arrive as another name."
   (require 'server)
   (let ((server-use-tcp (file-regular-p file))
         (server-auth-dir (file-name-directory file))
-        (server-socket-dir (file-name-directory file)))
+        (server-socket-dir (file-name-directory file))
+        (print-escape-multibyte t)
+        (print-escape-nonascii t))
     (condition-case err
-        (server-eval-at (file-name-nondirectory file) form)
+        (read (server-eval-at
+               (file-name-nondirectory file)
+               `(let ((print-escape-multibyte t)
+                      (print-escape-nonascii t))
+                  (prin1-to-string ,form))))
       (server-return-invalid-read-syntax (signal (car err) (cdr err)))
       (error (signal 'file-error (list "Cannot reach Emacs" file
                                        (error-message-string err)))))))
@@ -962,7 +985,9 @@ fetched here, as nobody, before the link is printed."
                            nil)))
                    (let ((org-moor-browser-download-function nil))
                      (org-moor-link (org-moor--take-what what sources title t))))))
-    (princ (concat link "\n"))))
+    ;; In UTF-8, as an agent reads it, rather than the system's code page.
+    (let ((coding-system-for-write 'utf-8))
+      (princ (concat link "\n")))))
 
 (defun org-moor-agent-take (sources what &optional title)
   "Take WHAT, a file or a URL, into SOURCES, and return a link to it.

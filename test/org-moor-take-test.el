@@ -9,6 +9,14 @@
 (require 'ert)
 (require 'org-moor)
 
+;; With native compilation, a primitive the tests redefine is given a
+;; trampoline, compiled then -- for each `ert-run-tests-batch-and-exit'
+;; afresh, into a cache of its own -- while a test may have redefined what
+;; compiling uses, `make-process' or `executable-find', and it fails.
+;; What is tested is called from Lisp, which sees the redefinition anyway.
+(defvar native-comp-enable-subr-trampolines)
+(setq native-comp-enable-subr-trampolines nil)
+
 (defmacro org-moor-test--with-notes (text &rest body)
   "Run BODY in a file-visiting Org buffer holding TEXT, with fresh sources.
 `dir' is the directory the file is in; the sources and org-dock's
@@ -153,9 +161,11 @@ visual -- the link goes after that character."
 
 (defmacro org-moor-test--serving (type disposition body &rest forms)
   "Run FORMS with every fetch sending BODY as TYPE, with DISPOSITION.
-`fetched' is the URL fetched last.  No snapshot is taken."
+`fetched' is the URL fetched last.  No snapshot is taken, and no browser
+is asked to download it."
   (declare (indent 3))
   `(let ((org-moor-snapshot-function nil)
+         (org-moor-browser-download-function nil)
          (fetched nil))
      (cl-letf (((symbol-function 'org-moor--fetch)
                 (lambda (url file done) (setq fetched url)
@@ -517,11 +527,14 @@ downloads to; with nothing told, Emacs fetches."
     (cl-letf (((symbol-function 'make-process)
                (lambda (&rest args)
                  (should (member "-Resolve" (plist-get args :command)))
-                 (let ((buf (plist-get args :buffer)))
-                   (with-current-buffer buf (insert "https://x/get\r\nC:\\dl\r\n"))
-                   (cl-letf (((symbol-function 'process-live-p) #'ignore)
-                             ((symbol-function 'process-buffer) (lambda (_) buf)))
-                     (funcall (plist-get args :sentinel) 'proc "finished\n"))))))
+                 ;; A real process, done, rather than more primitives
+                 ;; redefined: with native compilation, each would need a
+                 ;; trampoline compiled while `make-process' is not itself.
+                 (let ((proc (make-pipe-process :name "org-moor-test" :noquery t)))
+                   (delete-process proc)
+                   (with-current-buffer (plist-get args :buffer)
+                     (insert "https://x/get\r\nC:\\dl\r\n"))
+                   (funcall (plist-get args :sentinel) proc "finished\n")))))
       (org-moor-front-download "https://x/view" (lambda (how) (setq got how)))
       (should (equal got '("https://x/get" . "C:\\dl"))))))
 
@@ -552,13 +565,16 @@ downloads to; with nothing told, Emacs fetches."
 
 (ert-deftest org-moor-test-batch-command-by-the-server ()
   "While the server runs, the command names it; the agent fills in the same."
-  (cl-letf (((symbol-function 'org-moor--server-file) (lambda () "/run/emacs/server")))
-    (should (string-match-p
-             "-f org-moor-batch-take --server=/run/emacs/server /tmp/s FILE-OR-URL TITLE\\'"
-             (org-moor-batch-command "/tmp/s/"))))
-  (cl-letf (((symbol-function 'org-moor--server-file) #'ignore))
-    (should (string-match-p "-f org-moor-batch-take /tmp/s FILE-OR-URL TITLE\\'"
-                            (org-moor-batch-command "/tmp/s/")))))
+  ;; As the sources are named on this system: c\:/tmp/s on Windows.
+  (let ((sources (regexp-quote (shell-quote-argument (expand-file-name "/tmp/s") t))))
+    (cl-letf (((symbol-function 'org-moor--server-file) (lambda () "/run/emacs/server")))
+      (should (string-match-p
+               (concat "-f org-moor-batch-take --server=/run/emacs/server "
+                       sources " FILE-OR-URL TITLE\\'")
+               (org-moor-batch-command "/tmp/s/"))))
+    (cl-letf (((symbol-function 'org-moor--server-file) #'ignore))
+      (should (string-match-p (concat "-f org-moor-batch-take " sources " FILE-OR-URL TITLE\\'")
+                              (org-moor-batch-command "/tmp/s/"))))))
 
 (ert-deftest org-moor-test-batch-take-by-the-server ()
   "The server's Emacs takes it; when it cannot be reached, it is taken here."
@@ -576,4 +592,62 @@ downloads to; with nothing told, Emacs fetches."
       (let ((command-line-args-left (list "--server=/run/s" dir file)))
         (should (string-match-p "\\`\\[\\[moor:[^]]+\\]\\[a\\]\\]\n\\'"
                                 (with-output-to-string (org-moor-batch-take))))))
+    (delete-directory dir t)))
+
+(ert-deftest org-moor-test-batch-take-prints-utf-8 ()
+  "The link is printed in UTF-8, whatever the system's code page."
+  (let ((coding 'unset))
+    (cl-letf (((symbol-function 'org-moor--ask-server) (lambda (&rest _) "[[moor:x][題]]"))
+              ((symbol-function 'princ)
+               (lambda (&rest _) (setq coding coding-system-for-write))))
+      (let ((command-line-args-left (list "--server=/run/s" "/s" "https://x.com/")))
+        (org-moor-batch-take)))
+    (should (eq coding 'utf-8))))
+
+(ert-deftest org-moor-test-programs-given-arguments-they-read ()
+  "curl and monolith are given their arguments in the system's code page,
+a URL escaped to ASCII, and read in UTF-8."
+  (let ((org-moor-cookie-file nil) (calls nil))
+    (cl-letf (((symbol-function 'executable-find) #'identity)
+              ((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (push (cons (plist-get args :coding) (car (last (plist-get args :command))))
+                       calls)
+                 nil)))
+      (org-moor--curl "https://x.com/資料" "/tmp/f" #'ignore)
+      (org-moor-snapshot-monolith "https://x.com/資料" "/tmp/p" #'ignore))
+    (dolist (call calls)
+      (should (equal (car call) (cons 'utf-8 (org-moor-argument-coding))))
+      (should (equal (cdr call) "https://x.com/%E8%B3%87%E6%96%99"))))
+  (let ((system-type 'windows-nt) (locale-coding-system 'cp932))
+    (should (eq (org-moor-argument-coding) 'cp932)))
+  (let ((system-type 'darwin))
+    (should (eq (org-moor-argument-coding) 'utf-8))))
+
+(ert-deftest org-moor-test-ask-server-in-ascii ()
+  "A name that is not ASCII goes and comes back whole, whatever the server decodes by."
+  (require 'server)
+  (cl-letf (((symbol-function 'server-eval-at)
+             (lambda (_server form)
+               (let ((text (format "%S" form)))
+                 (should (string-match-p "\\`[[:ascii:]]*\\'" text))
+                 ;; The server decodes what arrives by its coding, cp932 here.
+                 (let ((value (eval (read (decode-coding-string text 'cp932)) t)))
+                   (should (string-match-p "\\`[[:ascii:]]*\\'" value))
+                   value)))))
+    (should (equal (org-moor--ask-server "/run/s" '(concat "c:/テスト/" "sources"))
+                   "c:/テスト/sources"))
+    (should (equal (org-moor--ask-server "/run/s" '(list "[[moor:x][題]]" 1))
+                   '("[[moor:x][題]]" 1)))))
+
+(ert-deftest org-moor-test-take-from-outside-into-no-directory ()
+  "Sources in a directory that is not there are not made: the name may
+have been mangled.  Sources alone may be made, in a project's first take."
+  (let* ((dir (make-temp-file "moor" t))
+         (file (expand-file-name "a.txt" dir))
+         (none (expand-file-name "none/sources" dir)))
+    (with-temp-file file (insert "a"))
+    (should-error (org-moor-agent-take none file))
+    (should-error (org-moor-agent-take none "https://x.com/p" "Page"))
+    (should-not (file-exists-p none))
     (delete-directory dir t)))

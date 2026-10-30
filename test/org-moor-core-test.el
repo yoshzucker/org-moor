@@ -11,10 +11,13 @@
 (require 'org-moor-take-test)
 
 (ert-deftest org-moor-test-source-directory ()
-  (let ((org-moor-sources-directory "/sources/"))
+  ;; A directory from the root is on a drive on Windows: c:/sources/.
+  (let ((org-moor-sources-directory "/sources/")
+        (root (expand-file-name "/")))
     (with-temp-buffer
-      (should (equal (org-moor-source-directory "6f1c-aa") "/sources/6f/1c-aa/"))
-      (should (equal (org-moor-source-directory "6f1c-aa" "/other/") "/other/6f/1c-aa/"))
+      (should (equal (org-moor-source-directory "6f1c-aa") (concat root "sources/6f/1c-aa/")))
+      (should (equal (org-moor-source-directory "6f1c-aa" "/other/")
+                     (concat root "other/6f/1c-aa/")))
       (should-error (org-moor-source-directory "6")))))
 
 (ert-deftest org-moor-test-link-parse ()
@@ -128,7 +131,9 @@ the request says which sources they are and how to cite them."
             (should (string-match-p (concat "^- moor:" (regexp-quote (plist-get record :id)) "  Rules$") text))
             (should (string-match-p (regexp-quote "[[moor:ID::123][TITLE l. 123]]") text))
             (should (string-match-p (concat "-f org-moor-batch-take "
-                                            (regexp-quote (directory-file-name org-moor-sources-directory))
+                                            (regexp-quote
+                                             (shell-quote-argument
+                                              (directory-file-name org-moor-sources-directory) t))
                                             " FILE-OR-URL TITLE$")
                                     text))))))))
 

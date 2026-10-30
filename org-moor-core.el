@@ -323,12 +323,21 @@ as it is: text, Markdown and PDF need nothing."
   :type '(alist :key-type string :value-type function)
   :group 'org-moor)
 
+(defun org-moor-argument-coding ()
+  "Return the coding a program is given its arguments in.
+On Windows that is the system's code page, cp932 in Japanese, which is
+not what Emacs encodes them by unless told: a name that is not ASCII
+would arrive as another.  A character the code page lacks cannot be
+given at all.  Elsewhere, UTF-8."
+  (or (and (eq system-type 'windows-nt) locale-coding-system) 'utf-8))
+
 (defun org-moor--process-string (program &rest args)
   "Return what PROGRAM prints with ARGS, or signal with what it complained."
   (unless (executable-find program)
     (user-error "org-moor: %s is not installed" program))
   (with-temp-buffer
-    (let ((status (let ((coding-system-for-read 'utf-8))
+    (let ((status (let ((coding-system-for-read 'utf-8)
+                        (coding-system-for-write (org-moor-argument-coding)))
                     (apply #'call-process program nil t nil args))))
       (unless (eq status 0)
         (user-error "org-moor: %s failed: %s" program

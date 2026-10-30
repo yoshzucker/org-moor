@@ -21,7 +21,9 @@ taken from, and `notes' the notes' buffer, saved."
             (org-moor-move-directories nil)
             (org-moor-files-function (lambda () (list buffer-file-name)))
             (notes (current-buffer)))
-       (with-temp-file orig (insert "rule one\nrule two\n"))
+       ;; Its lines end in LF alone, as they would not on Windows by default.
+       (let ((coding-system-for-write 'utf-8-unix))
+         (with-temp-file orig (insert "rule one\nrule two\n")))
        (org-moor-test--titles-as-given
          (let* ((record (org-moor-record (org-moor-test--id-at (org-moor-take-file orig))))
                 (replica (plist-get record :replica)))
