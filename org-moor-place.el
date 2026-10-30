@@ -23,9 +23,9 @@
 ;; note.  A text is shown read-only, with its line marked, so that moving
 ;; about it cannot change it.  `q' writes the heading back.
 ;;
-;; From the heading: `org-moor-open-source' opens the replica of a source it
-;; links to; with a prefix, the source's origin -- the page on the web, or
-;; the file where it was.
+;; From the heading: `org-moor-open-replica' opens the replica of a source it
+;; links to; `org-moor-open-origin', the source's origin -- the page on the
+;; web, or the file where it was.
 ;;
 ;; `org-moor-set-title' gives a source another title, since the record that
 ;; holds it is out of the way, and the links here that bear the old one.
@@ -231,8 +231,8 @@ The heading at point, or a heading under it; asked for when several."
            (records (delq nil (mapcar #'org-moor-find-record ids))))
       (org-moor--choose-record (or records (user-error "org-moor: no source here"))))))
 
-;;;###autoload (autoload 'org-moor-open-source "org-moor" nil t)
-(defun org-moor-open-source (&optional how)
+;;;###autoload (autoload 'org-moor-open-replica "org-moor" nil t)
+(defun org-moor-open-replica (&optional how)
   "Open the replica of the source at point, or one the heading links to.
 As following a link to it does: HOW, the prefix, nil for what
 `org-file-apps' says, \\[universal-argument] for Emacs, two for the program
@@ -240,11 +240,13 @@ the system opens it with."
   (interactive "P")
   (org-moor-open-record (org-moor--record-here) nil (org-moor--heading-marker) how))
 
+(define-obsolete-function-alias 'org-moor-open-source #'org-moor-open-replica "0.3")
+
 ;;;###autoload (autoload 'org-moor-open-origin "org-moor" nil t)
 (defun org-moor-open-origin (&optional how)
   "Open where the source at point, or one the heading links to, came from.
 A URL in the browser; a path where it still is, HOW as for
-`org-moor-open-source'."
+`org-moor-open-replica'."
   (interactive "P")
   (org-moor--open-origin (or (plist-get (org-moor--record-here) :origin)
                              (user-error "org-moor: no origin"))
@@ -512,7 +514,7 @@ does.  A PDF is shown by pdf-tools when it is there, else by DocView; a
 page, by EWW, where `i' notes what is selected as a text to find; Word,
 PowerPoint and the like, as what pandoc makes them, whose lines `i'
 notes -- see `org-moor-readable-converters'.
-Any other replica is opened as `org-moor-open-source' would."
+Any other replica is opened as `org-moor-open-replica' would."
   (interactive)
   (let* ((record (org-moor--record-here))
          (replica (plist-get record :replica)))

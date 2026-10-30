@@ -163,7 +163,7 @@ The settings most worth giving:
 | ~org-moor-noter~          | read a source beside its heading; ~i~ notes, ~q~ is done     |
 | ~org-moor-insert-place~   | note the place being read, in the heading it is read for     |
 | ~org-moor-jump~           | back to any heading something was taken to                   |
-| ~org-moor-open-source~    | open a source's replica, as following its link does          |
+| ~org-moor-open-replica~   | open a source's replica, as following its link does          |
 | ~org-moor-open-origin~    | open where a source came from                                |
 | ~org-moor-clip-origin~    | put where a source came from on the clipboard                |
 | ~org-moor-set-title~      | give a source another title                                  |
@@ -366,7 +366,7 @@ text, Markdown and PDF as they are, the others made readable once by
 ~org-moor-readable-converters~ (pandoc, to Markdown beside the replica).  It
 is told which sources they are, and to cite a place as the links here do.
 
-~org-moor-open-source~, on a heading, opens the replica of a source it, or a
+~org-moor-open-replica~, on a heading, opens the replica of a source it, or a
 heading under it, links to, the prefix as for a link;
 ~org-moor-open-origin~, where it came from.  A URL opens in the browser,
 but a Word, Excel or PowerPoint document on a web server -- a document

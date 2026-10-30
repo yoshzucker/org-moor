@@ -381,7 +381,7 @@ the buffer before then is lost when it is drawn."
     (add-hook 'eww-after-render-hook hook)
     (eww-open-file file)))
 
-(defun org-moor-open-replica (file &optional place then how)
+(defun org-moor-open-replica-file (file &optional place then how)
   "Open FILE, at PLACE when there is one and Emacs can show it.
 PLACE is a page of a PDF; a line of a replica read as text, or of what a
 replica was made readable as, where an agent read it; or a text to find,
@@ -471,8 +471,8 @@ the browser."
 (defun org-moor--open-origin (origin &optional how)
   "Open ORIGIN: a URL in the browser, a path where it still is.
 An Office document's URL in its application instead; see
-`org-moor-office-url-schemes'.  HOW is as `org-moor-open-replica' has it,
-for a path."
+`org-moor-office-url-schemes'.  HOW is as `org-moor-open-replica-file'
+has it, for a path."
   (cond ((string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]+:[^\\]" origin)
          ;; Percent-encoded, for a character outside ASCII can be read
          ;; in another coding on its way to the browser.
@@ -499,10 +499,10 @@ Where what is noted from it is written; see `org-moor-insert-place'.")
 (defun org-moor-open-record (record &optional place from how)
   "Open the replica of RECORD at PLACE, or else its origin, saying so.
 FROM, a marker at a heading, is kept in the replica's buffer as the heading
-it is read for.  HOW is as `org-moor-open-replica' has it."
+it is read for.  HOW is as `org-moor-open-replica-file' has it."
   (cond
    ((plist-get record :replica)
-    (org-moor-open-replica (plist-get record :replica) place
+    (org-moor-open-replica-file (plist-get record :replica) place
                         (and from (lambda () (setq org-moor--read-for from)))
                         how))
    ((plist-get record :origin)

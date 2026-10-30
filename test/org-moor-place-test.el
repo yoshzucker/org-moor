@@ -158,16 +158,16 @@ taken out on the right, `i' noting there, `q' writing it back."
       (should-not org-moor-noter-mode)
       (should-not buffer-read-only))))
 
-(ert-deftest org-moor-test-open-source ()
+(ert-deftest org-moor-test-open-replica ()
   "A replica is opened by `org-open-file', given the prefix as a `file:' link
 is; the origin, by its own command."
   (org-moor-test--with-source
     (let (opened)
       (cl-letf (((symbol-function 'org-open-file)
                  (lambda (f &optional how &rest _) (setq opened (list f how)))))
-        (org-moor-open-source)
+        (org-moor-open-replica)
         (should (equal opened (list replica nil)))
-        (org-moor-open-source '(16))
+        (org-moor-open-replica '(16))
         (should (equal opened (list replica '(16))))
         (org-moor-link-follow (format "%s::2" (plist-get record :id)) '(16))
         (should (equal opened (list replica '(16))))

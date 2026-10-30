@@ -37,7 +37,7 @@
 ;; `org-moor-put-away'   move a file into a directory of yours, and take it too
 ;; `org-moor-noter'      read a source beside its heading, taken out to note in
 ;; `org-moor-insert-place' note the place being read, in its heading
-;; `org-moor-open-source' the replica of a source the heading links to, as its link
+;; `org-moor-open-replica' the replica of a source the heading links to
 ;; `org-moor-open-origin' where a source the heading links to came from
 ;; `org-moor-clip-origin' that origin, onto the clipboard
 ;; `org-moor-set-title'  give a source another title
