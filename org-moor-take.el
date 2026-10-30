@@ -760,10 +760,25 @@ it is moved to the source.  For `org-moor-take-url-to', as KEEP."
   (expand-file-name "script" (file-name-directory (or load-file-name buffer-file-name)))
   "The package's scripts.")
 
+(defun org-moor--front-press (url)
+  "Have script/org-moor-front.ps1 type the keys for URL once it is in front.
+For a URL whose entry gives keys -- SingleFile's shortcut, say -- which
+Emacs has just opened; the script waits for the browser to show it."
+  (ignore-errors
+    (make-process
+     :name "org-moor-press"
+     :command `("powershell.exe" "-NoProfile" "-ExecutionPolicy" "Bypass"
+                "-File" ,(expand-file-name "org-moor-front.ps1" org-moor-script-directory)
+                "-Press" ,url)
+     :coding (cons 'utf-8 (org-moor-argument-coding))
+     :noquery t)))
+
 (defun org-moor-front-download (url done)
   "Call DONE with how a browser downloads URL, as script/org-moor-front.ps1 says.
-With nil, when the script says none, or cannot be asked.  What it writes
-as errors is not read.  See `org-moor-browser-download-function'."
+With nil, when the script says none, or cannot be asked.  For a URL whose
+entry gives keys, URL itself is opened, and the script then types them,
+by `org-moor--front-press'.  What it writes as errors is not read.  See
+`org-moor-browser-download-function'."
   (let ((script (expand-file-name "org-moor-front.ps1" org-moor-script-directory))
         (out (generate-new-buffer " *org-moor-resolve*"))
         (err (generate-new-buffer " *org-moor-resolve-errors*")))
@@ -787,7 +802,10 @@ as errors is not read.  See `org-moor-browser-download-function'."
                             (delete-process errors))
                           (kill-buffer err)
                           (funcall done (pcase lines
-                                          (`(,download ,dir) (cons download dir))))))))))
+                                          (`(,download ,dir) (list download dir))
+                                          (`(,page ,dir "keys")
+                                           (list page dir
+                                                 (lambda () (org-moor--front-press url))))))))))))
       (kill-buffer out)
       (kill-buffer err)
       (funcall done nil))))
@@ -796,16 +814,17 @@ as errors is not read.  See `org-moor-browser-download-function'."
   (and (eq system-type 'windows-nt) #'org-moor-front-download)
   "Function telling how a browser downloads a URL's replica, or nil.
 Called with a URL and a function it calls, once it knows, with
-\(DOWNLOAD . DIR), the URL a browser signed in downloads the replica from
-and the directory it downloads into, or with nil when the URL is fetched
-as `org-moor-fetch' fetches it.  DOWNLOAD is opened by `browse-url'.  On
-Windows, the script for the document in front is asked, by the
-configuration it keeps sites in."
+\(DOWNLOAD DIR THEN), the URL a browser signed in downloads the replica
+from, the directory it downloads into and, when not nil, a function
+called once DOWNLOAD is opened -- one that has an extension save the page,
+say; or with nil when the URL is fetched as `org-moor-fetch' fetches it.
+DOWNLOAD is opened by `browse-url'.  On Windows, the script for the
+document in front is asked, by the configuration it keeps sites in."
   :type '(choice function (const nil))
   :group 'org-moor)
 
 (defvar org-moor--browser-queue nil
-  "Downloads waiting for the browser, each (DOWNLOAD DIR URL INTO DONE).")
+  "Downloads waiting for the browser, each (DOWNLOAD DIR THEN URL INTO DONE).")
 
 (defvar org-moor--browser-busy nil
   "Non-nil while a download by the browser is awaited.")
@@ -815,7 +834,7 @@ configuration it keeps sites in."
 One at a time, since a replica is told from another only by when it came."
   (unless org-moor--browser-busy
     (when-let* ((next (pop org-moor--browser-queue)))
-      (pcase-let ((`(,download ,dir ,url ,into ,done) next))
+      (pcase-let ((`(,download ,dir ,then ,url ,into ,done) next))
         (setq org-moor--browser-busy t)
         (let ((finish (lambda (name)
                         (setq org-moor--browser-busy nil)
@@ -824,6 +843,7 @@ One at a time, since a replica is told from another only by when it came."
           (condition-case err
               (let ((since (current-time)))
                 (browse-url download)
+                (when then (funcall then))
                 (funcall (org-moor-arriving dir since) url into finish))
             (error (message "org-moor: %s" (error-message-string err))
                    (funcall finish nil))))))))
@@ -841,7 +861,8 @@ downloading; else by `org-moor-fetch'."
                    (org-moor-fetch url dir done)
                  (setq org-moor--browser-queue
                        (append org-moor--browser-queue
-                               (list (list (car how) (cdr how) url dir done))))
+                               (list (list (nth 0 how) (nth 1 how) (nth 2 how)
+                                           url dir done))))
                  (org-moor--browser-next))))))
 
 (defun org-moor--clipboard-url ()

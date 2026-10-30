@@ -466,7 +466,7 @@ downloads to; with nothing told, Emacs fetches."
       (let ((org-moor-browser-download-function
              (lambda (url done)
                (funcall done (and (string-match-p "files" url)
-                                  (cons "https://files.example.com/get?id=1" "/dl"))))))
+                                  (list "https://files.example.com/get?id=1" "/dl"))))))
         (org-moor-browser-or-fetch "https://files.example.com/view?id=1" "/s"
                                    (lambda (name) (should (equal name "a.pptx"))))
         (should (equal opened '("https://files.example.com/get?id=1")))
@@ -484,7 +484,7 @@ downloads to; with nothing told, Emacs fetches."
   (let ((result 'unset) (org-moor--browser-queue nil) (org-moor--browser-busy nil))
     (cl-letf (((symbol-function 'browse-url) (lambda (&rest _) (error "No browser"))))
       (let ((org-moor-browser-download-function
-             (lambda (_url done) (funcall done (cons "https://x/get" "/dl")))))
+             (lambda (_url done) (funcall done (list "https://x/get" "/dl")))))
         (org-moor-browser-or-fetch "https://x/view" "/s" (lambda (n) (setq result n)))
         (should-not result)
         (should-not org-moor--browser-busy)))))
@@ -498,7 +498,7 @@ downloads to; with nothing told, Emacs fetches."
                (lambda (_dir _since)
                  (lambda (_url _into done) (setq waiting done)))))
       (let ((org-moor-browser-download-function
-             (lambda (url done) (funcall done (cons (concat url "/get") "/dl")))))
+             (lambda (url done) (funcall done (list (concat url "/get") "/dl")))))
         (org-moor-browser-or-fetch "https://x/1" "/s" (lambda (n) (push n got)))
         (org-moor-browser-or-fetch "https://x/2" "/s" (lambda (n) (push n got)))
         (should (equal opened '("https://x/1/get")))
@@ -536,7 +536,41 @@ downloads to; with nothing told, Emacs fetches."
                      (insert "https://x/get\r\nC:\\dl\r\n"))
                    (funcall (plist-get args :sentinel) proc "finished\n")))))
       (org-moor-front-download "https://x/view" (lambda (how) (setq got how)))
-      (should (equal got '("https://x/get" . "C:\\dl"))))))
+      (should (equal got '("https://x/get" "C:\\dl"))))))
+
+(ert-deftest org-moor-test-front-download-has-keys-typed ()
+  "For an entry that gives keys, the URL itself is opened, and the script
+is then started to type them."
+  (let ((got 'unset) (commands nil)
+        (org-moor-script-directory (make-temp-file "moor" t)))
+    (with-temp-file (expand-file-name "org-moor-front.ps1" org-moor-script-directory))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (push (plist-get args :command) commands)
+                 (when (plist-get args :sentinel)
+                   (let ((proc (make-pipe-process :name "org-moor-test" :noquery t)))
+                     (delete-process proc)
+                     (with-current-buffer (plist-get args :buffer)
+                       (insert "https://x/page\r\nC:\\dl\r\nkeys\r\n"))
+                     (funcall (plist-get args :sentinel) proc "finished\n"))))))
+      (org-moor-front-download "https://x/page" (lambda (how) (setq got how)))
+      (should (equal (seq-take got 2) '("https://x/page" "C:\\dl")))
+      (should (equal (length commands) 1))
+      (funcall (nth 2 got))
+      (should (equal (last (car commands) 2) '("-Press" "https://x/page"))))
+    (delete-directory org-moor-script-directory t)))
+
+(ert-deftest org-moor-test-browser-then-after-opening ()
+  "What is to be done once the download is opened is done after it."
+  (let ((events nil) (org-moor--browser-queue nil) (org-moor--browser-busy nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push (list 'open u) events)))
+              ((symbol-function 'org-moor-arriving)
+               (lambda (_dir _since)
+                 (lambda (_url _into done) (push 'wait events) (funcall done "p.html")))))
+      (let ((org-moor-browser-download-function
+             (lambda (url done) (funcall done (list url "/dl" (lambda () (push 'keys events)))))))
+        (org-moor-browser-or-fetch "https://x/page" "/s" #'ignore)
+        (should (equal (reverse events) '((open "https://x/page") keys wait)))))))
 
 (ert-deftest org-moor-test-protocol-does-not-look-up-again ()
   "A URL from outside has been looked up there: Emacs fetches it."

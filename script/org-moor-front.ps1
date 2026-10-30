@@ -60,10 +60,19 @@
 .PARAMETER Resolve
   A URL to look up instead of reading a window, for Emacs: printed are
   the URL a browser downloads it from, by the configuration's entries, and
-  the Downloads folder, a line each, or nothing when no entry gives a
-  download for it.  Nothing is opened.
+  the Downloads folder, a line each; for an entry that gives keys, the URL
+  itself, the Downloads folder and keys, for Emacs to open the URL and
+  then start this script with -Press; nothing when no entry gives either.
+  Nothing is opened.
+
+.PARAMETER Press
+  A URL Emacs has just opened in a browser, whose entry gives keys: once
+  the window in front shows it and its title has stayed the same for a
+  moment, as a page's does once it has loaded, its keys are typed there.
+  Nothing is typed when it is not in front within -PressTimeout seconds.
 #>
-param([long]$Hwnd = 0, [switch]$WriteConfig, [string]$Resolve = '')
+param([long]$Hwnd = 0, [switch]$WriteConfig, [string]$Resolve = '',
+      [string]$Press = '', [int]$PressTimeout = 60)
 $ErrorActionPreference = 'SilentlyContinue'
 
 $ConfigHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
@@ -105,7 +114,8 @@ function Get-BrowserKeep($url) {
         [regex]::Replace($entry.download, '\{(\w+)\}',
           { param($m) [string]$groups[$m.Groups[1].Value] })
       } else { '' }
-      return @{ Download = $download; Keys = [string]$entry.keys; Title = [string]$entry.title }
+      return @{ Download = $download; Keys = [string]$entry.keys; Title = [string]$entry.title
+                Match = [string]$entry.match }
     }
   }
   return $null
@@ -121,14 +131,20 @@ function Get-Downloads {
 
 # For Emacs, taking a URL it was given rather than one in front: the URL a
 # browser downloads it from, by the same entries, and where to, a line each;
-# nothing for a URL no entry gives a download for.  Keys are not typed, as
-# nothing says the page is in front.
+# for keys, the URL itself, where to and `keys', the keys typed by -Press
+# once Emacs has opened it; nothing for a URL no entry gives either for.
 if ($Resolve) {
   $keep = Get-BrowserKeep $Resolve
-  if ($keep -and $keep.Download) {
+  if ($keep -and ($keep.Download -or $keep.Keys)) {
     [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
-    Write-Output $keep.Download
-    Write-Output (Get-Downloads)
+    if ($keep.Download) {
+      Write-Output $keep.Download
+      Write-Output (Get-Downloads)
+    } else {
+      Write-Output $Resolve
+      Write-Output (Get-Downloads)
+      Write-Output 'keys'
+    }
   }
   exit 0
 }
@@ -150,12 +166,6 @@ function Get-FrontWindow {
   }
   return $e
 }
-
-$window = if ($Hwnd -ne 0) { $AE::FromHandle([IntPtr]$Hwnd) } else { Get-FrontWindow }
-if (-not $window) { exit 0 }
-$handle = [IntPtr]$window.Current.NativeWindowHandle
-$proc = Get-Process -Id $window.Current.ProcessId
-$exe = $proc.ProcessName
 
 $copies = Join-Path $env:TEMP 'org-moor'
 New-Item -ItemType Directory -Force -Path $copies | Out-Null
@@ -269,6 +279,59 @@ function Get-FileUrlPath($url) {
   return $p -replace '/', '\'
 }
 
+$Browsers = '^(msedge|chrome|brave|firefox|zen)$'
+
+# A browser window's title without the browser's name, and the URL of the
+# page it shows.
+function Get-PageTitle($window) {
+  return $window.Current.Name -replace ' - (Microsoft.? Edge|Google Chrome|Brave)$', '' -replace ' - [^-]*Microsoft.? Edge$', '' -replace ' [-\u2014] (Mozilla Firefox|Zen( Browser)?)$', ''
+}
+
+function Get-WindowUrl($window, $title) {
+  $url = Get-BrowserUrl $window
+  if ($url -match '^https?://[^/]+/?$') {
+    $page = Get-PageUrl $window $title
+    if ($page) { $url = $page }
+  }
+  return $url
+}
+
+# For Emacs, which has just opened a URL whose entry gives keys: they are
+# typed in the browser once it is in front showing a page of the entry --
+# a sign-in page is not one -- and the page's title has stayed the same
+# for a second and a half, as it does once the page has loaded.
+if ($Press) {
+  $keep = Get-BrowserKeep $Press
+  if (-not ($keep -and $keep.Keys)) { exit 0 }
+  $deadline = (Get-Date).AddSeconds($PressTimeout)
+  $last = $null; $steady = 0
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Milliseconds 500
+    $front = Get-FrontWindow
+    if (-not $front) { $last = $null; continue }
+    $proc = Get-Process -Id $front.Current.ProcessId
+    if ($proc.ProcessName -notmatch $Browsers) { $last = $null; continue }
+    $title = Get-PageTitle $front
+    $url = Get-WindowUrl $front $title
+    if (-not ($url -match $keep.Match)) { $last = $null; continue }
+    if ($title -eq $last) { $steady++ } else { $last = $title; $steady = 0 }
+    if ($steady -ge 3) {
+      $wsh = New-Object -ComObject WScript.Shell
+      [void]$wsh.AppActivate($proc.Id)
+      Start-Sleep -Milliseconds 150
+      $wsh.SendKeys($keep.Keys)
+      exit 0
+    }
+  }
+  exit 0
+}
+
+$window = if ($Hwnd -ne 0) { $AE::FromHandle([IntPtr]$Hwnd) } else { Get-FrontWindow }
+if (-not $window) { exit 0 }
+$handle = [IntPtr]$window.Current.NativeWindowHandle
+$proc = Get-Process -Id $window.Current.ProcessId
+$exe = $proc.ProcessName
+
 $path = ''; $url = ''; $origin = ''; $arriving = ''; $since = ''
 $title = $window.Current.Name
 
@@ -327,13 +390,9 @@ switch -Regex ($exe) {
       }
     }
   }
-  '^(msedge|chrome|brave|firefox|zen)$' {
-    $url = Get-BrowserUrl $window
-    $title = $title -replace ' - (Microsoft.? Edge|Google Chrome|Brave)$', '' -replace ' - [^-]*Microsoft.? Edge$', '' -replace ' [-\u2014] (Mozilla Firefox|Zen( Browser)?)$', ''
-    if ($url -match '^https?://[^/]+/?$') {
-      $page = Get-PageUrl $window $title
-      if ($page) { $url = $page }
-    }
+  $Browsers {
+    $title = Get-PageTitle $window
+    $url = Get-WindowUrl $window $title
     $title = $title -replace '\.(pptx?|docx?|xlsx?|pdf)$', ''
     if ($url -match '^file:') {
       $path = Get-FileUrlPath $url; $url = ''; $title = ''

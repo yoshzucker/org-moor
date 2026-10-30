@@ -112,8 +112,11 @@ changed.  A URL taken in Emacs -- by ~org-moor-take-url~,
 through ~org-moor-browser-download-function~, in the background: one an
 entry gives a download for is opened by ~browse-url~, and its replica taken
 from the Downloads folder, one download at a time, since a replica there is
-told from another only by when it came.  Keys are typed only from the
-hotkey, while the page is in front.
+told from another only by when it came.  One an entry gives keys for is
+opened by ~browse-url~ too, and the script types the keys once the browser
+is in front showing a page of the entry and its title has stayed the same
+for a moment, as it does once the page has loaded; a sign-in page in its
+place is left alone.
 
 An agent working on a heading taken out by org-dock is told a command
 that takes a source in.  While the server of the Emacs you work in is
