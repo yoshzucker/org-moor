@@ -21,13 +21,13 @@ seconds, whenever you are asked, however long it has been.
 
 So this package does five things, and none of them is to organise:
 
-| Step   | What it does                                                        |
-|--------+---------------------------------------------------------------------|
-| Take   | bring a thing in when you meet it, which is usually outside Emacs   |
-| Write  | write what it means, in the heading, beside the source as you read  |
-| Tie    | join what you wrote to the source, and to the place inside it       |
-| Return | get back to the heading, to the copy, to the place, to the origin   |
-| Re-tie | link a source from anywhere else, retitle it, or let its copy go    |
+| Step   | What it does                                                         |
+|--------+----------------------------------------------------------------------|
+| Take   | bring a thing in when you meet it, which is usually outside Emacs    |
+| Write  | write what it means, in the heading, beside the source as you read   |
+| Tie    | join what you wrote to the source, and to the place inside it        |
+| Return | get back to the heading, to the replica, to the place, to the origin |
+| Re-tie | link a source from anywhere else, retitle it, or let its replica go  |
 
 What the package fixes is what holds these together: a link from what you
 wrote to the source, and where sources are kept.  What you write, where,
@@ -46,7 +46,7 @@ org-moor needs [[https://github.com/yoshzucker/org-dock][org-dock]], which takes
   :commands (org-moor-take-clipboard org-moor-take-file org-moor-take-url
              org-moor-noter org-moor-insert-place org-moor-jump
              org-moor-sweep org-moor-set-title org-moor-set-origin
-             org-moor-set-copy org-moor-keep-copy)
+             org-moor-set-replica org-moor-keep-replica)
   :hook (org-mode . org-moor-eldoc-setup)
   :init
   (with-eval-after-load 'org-protocol
@@ -74,7 +74,7 @@ Each asks the app what it has open and sends it through org-protocol.
 What arrives goes where Emacs was left: at point when the buffer in front
 is Org, as if taken there; otherwise a heading is asked for.
 On Windows, a PowerPoint, Word or Excel document opened from the web is
-saved as a copy by the app itself, which is taken with its URL as the
+saved by the app itself, and the file is taken with its URL as the
 origin.  A message in Outlook -- open in its window, or selected in the
 list -- is saved as a ~.msg~ and taken.  A file open in a browser is
 taken as the file: one on disk by its path, and one in a document
@@ -98,7 +98,7 @@ On Windows, the script asks the browser itself to keep what some sites
 keep behind a sign-in -- a file in a document library, a wiki page as
 the PDF its site exports, a page that only an extension such as
 SingleFile saves whole -- by sending it to a URL that downloads it, or
-typing the extension's shortcut; the copy is taken from the Downloads
+typing the extension's shortcut; the replica is taken from the Downloads
 folder once it is there.  Which sites those are is
 ~~/.config/org-moor/front.json~: under ~sites~, an entry -- one ~{ }~ --
 for each URL pattern.  A URL gets the first entry whose ~match~ fits it,
@@ -108,38 +108,38 @@ the site adds to the window's title, taken off.
 ~script/org-moor-front.json~ is read while there is none, and is its
 template: ~org-moor-front.ps1 -WriteConfig~ writes it there to be
 changed.  A URL taken in Emacs -- by ~org-moor-take-url~,
-~org-moor-keep-copy~ or an agent -- is looked up in the same entries,
+~org-moor-keep-replica~ or an agent -- is looked up in the same entries,
 through ~org-moor-browser-download-function~, in the background: one an
-entry gives a download for is opened by ~browse-url~, and its copy taken
-from the Downloads folder, one download at a time, since a copy there is
+entry gives a download for is opened by ~browse-url~, and its replica taken
+from the Downloads folder, one download at a time, since a replica there is
 told from another only by when it came.  Keys are typed only from the
 hotkey, while the page is in front.
 
 An agent working on a heading taken out by org-dock is told a command
 that takes a source in.  While the server of the Emacs you work in is
 running, the command has that Emacs take it, so that a URL is fetched as
-you would fetch it, the link coming back at once and the copy after;
+you would fetch it, the link coming back at once and the replica after;
 otherwise, or when it cannot be reached, a batch Emacs takes it, and
 fetches as nobody.
 
-Following a link opens the source's copy as a ~file:~ link to it would
+Following a link opens the source's replica as a ~file:~ link to it would
 be opened: as ~org-file-apps~ says, in Emacs with ~C-u~, and in the
 program the system opens it with on ~C-u C-u~.  A link to a place opens
-the copy in Emacs at the place, since only there can it be sought: a
+the replica in Emacs at the place, since only there can it be sought: a
 page of a PDF, a line, or a text in a page, which EWW shows.  When there
 is none -- it is
 still arriving, or could not be kept -- the original is opened, and the
-echo area says so, so that you know it is not a copy you are in.
-A copy that could not be kept is said so in the echo area when it fails;
+echo area says so, so that you know it is not a replica you are in.
+A replica that could not be kept is said so in the echo area when it fails;
 downloaded by hand, the file is given to the source with
-~org-moor-set-copy~, on a link to it or in Dired.  A source that has only
+~org-moor-set-replica~, on a link to it or in Dired.  A source that has only
 its origin -- one an agent took, which fetches as nobody, not as you --
-is given its copy by ~org-moor-keep-copy~, on a link to it, on a heading
+is given its replica by ~org-moor-keep-replica~, on a link to it, on a heading
 for every source the heading links to, or on a region: a URL is fetched
 again, here, with your cookies, and a path still there is taken.
-Whether a source has its copy is said before the link is followed:
+Whether a source has its replica is said before the link is followed:
 with point on a link, ~org-moor-eldoc-setup~ on ~org-mode-hook~ has the
-echo area say the copy and its size, or that there is none, and how,
+echo area say the replica and its size, or that there is none, and how,
 when and from where the source was taken; the mouse over a link says
 the same.
 
@@ -149,29 +149,30 @@ The settings most worth giving:
 - ~org-moor-move-directories~: where things pile up; files there are moved
   when taken, and listed by ~org-moor-sweep~.
 - ~org-moor-directory-roots~: where ~org-moor-put-away~ offers to put files.
-- ~org-file-apps~, Org's: which copies Emacs reads, and which the system
+- ~org-file-apps~, Org's: which replicas Emacs reads, and which the system
   opens.
 - ~org-dock-agent-function~, org-dock's: an agent to help write a heading.
 
 * Commands
 
-| Command                   | Does                                                      |
-|---------------------------+-----------------------------------------------------------|
-| ~org-moor-take-clipboard~ | take the clipboard's text or image                        |
-| ~org-moor-take-file~      | take a file (in Dired, the one at point)                  |
-| ~org-moor-take-url~       | take a web page                                           |
-| ~org-moor-noter~          | read a source beside its heading; ~i~ notes, ~q~ is done  |
-| ~org-moor-insert-place~   | note the place being read, in the heading it is read for  |
-| ~org-moor-jump~           | back to any heading something was taken to                |
-| ~org-moor-open-source~    | open a source's copy, as following its link does          |
-| ~org-moor-open-origin~    | open where a source came from                             |
-| ~org-moor-set-title~      | give a source another title                               |
-| ~org-moor-set-origin~     | give the sources in the region (or at point) an origin    |
-| ~org-moor-set-copy~       | give a source a file as its copy (one downloaded by hand) |
-| ~org-moor-keep-copy~      | keep a copy, from its origin, of sources that have none   |
-| ~org-moor-sweep~          | what piled up, as one Dired buffer, newest first          |
-| ~org-moor-put-away~       | move files into a directory of yours (and take them)      |
-| ~org-moor-prune~          | choose which copies to let go                             |
+| Command                   | Does                                                         |
+|---------------------------+--------------------------------------------------------------|
+| ~org-moor-take-clipboard~ | take the clipboard's text or image                           |
+| ~org-moor-take-file~      | take a file (in Dired, the one at point)                     |
+| ~org-moor-take-url~       | take a web page                                              |
+| ~org-moor-noter~          | read a source beside its heading; ~i~ notes, ~q~ is done     |
+| ~org-moor-insert-place~   | note the place being read, in the heading it is read for     |
+| ~org-moor-jump~           | back to any heading something was taken to                   |
+| ~org-moor-open-source~    | open a source's replica, as following its link does          |
+| ~org-moor-open-origin~    | open where a source came from                                |
+| ~org-moor-clip-origin~    | put where a source came from on the clipboard                |
+| ~org-moor-set-title~      | give a source another title                                  |
+| ~org-moor-set-origin~     | give the sources in the region (or at point) an origin       |
+| ~org-moor-set-replica~    | give a source a file as its replica (one downloaded by hand) |
+| ~org-moor-keep-replica~   | keep a replica, from its origin, of sources that have none   |
+| ~org-moor-sweep~          | what piled up, as one Dired buffer, newest first             |
+| ~org-moor-put-away~       | move files into a directory of yours (and take them)         |
+| ~org-moor-prune~          | choose which replicas to let go                              |
 
 With a prefix, the taking commands ask for the heading even in Org.
 
@@ -185,8 +186,8 @@ Five words carry the weight, and they are kept apart on purpose.
   the clipboard -- a message, a screenshot.  It has an /origin/ -- where
   it was when you met it, a URL or a path -- which is kept even after the
   origin changes or disappears.
-- a *copy* is a source's bytes, kept with it.  A source may have no copy
-  (a URL you only link to) or lose it (a copy let go); its origin and what
+- a *replica* is a source's bytes, kept with it.  A source may have no replica
+  (a URL you only link to) or lose it (a replica let go); its origin and what
   you wrote about it remain.
 - the *sources directory* is where sources are kept, a directory each,
   named by the source's id.  Nothing in it is meant to be arranged by
@@ -204,15 +205,15 @@ package does not look inside it, except to find where it points.
 
 Each source is a directory of the sources directory, named by its id as
 ~org-attach~ names its own: the id's first two characters, and the rest
-below them.  In it are its copy and its record, ~moor.org~, which says what
+below them.  In it are its replica and its record, ~moor.org~, which says what
 it is in a property drawer and a title:
 
-| Property      | Holds                                                    |
-|---------------+----------------------------------------------------------|
-| ~MOOR_ORIGIN~ | where it was: a URL, or the path it was taken from       |
-| ~MOOR_VIA~    | how it arrived: ~web~, ~file~, ~mail~, ~chat~, ...       |
-| ~MOOR_FILE~   | the copy's file name, if it has one                      |
-| ~MOOR_TAKEN~  | when it was taken, an inactive timestamp                 |
+| Property      | Holds                                              |
+|---------------+----------------------------------------------------|
+| ~MOOR_ORIGIN~ | where it was: a URL, or the path it was taken from |
+| ~MOOR_VIA~    | how it arrived: ~web~, ~file~, ~mail~, ~chat~, ... |
+| ~MOOR_FILE~   | the replica's file name, if it has one             |
+| ~MOOR_TAKEN~  | when it was taken, an inactive timestamp           |
 
 #+begin_example
 sources/6f/1c.../manual.pdf
@@ -253,7 +254,7 @@ name, it returns non-nil.  What org-moor writes there, and tells an agent
 to write, is then ~[[moor:6f1c...::12][p. 12]]~; a link to the source
 itself is still named by its title.
 
-The record is the source's, so it goes where the copy goes, and whatever
+The record is the source's, so it goes where the replica goes, and whatever
 is written about the source in Org can be moved, rewritten or thrown
 away without losing where it came from.
 
@@ -284,10 +285,10 @@ A quote block written by hand, or an image yanked with Org's own
 ** Places
 
 A place is written ~moor:ID::N~: page N of a PDF, or line N of any other
-copy -- one read as text, see ~org-moor-text-extensions~, or what a copy
-was made readable as.  A copy is not changed once taken, so its lines
-stay where they were.  Following the link opens the copy there; without a
-copy, the origin.  A ~moor:ID~ link with no place is the source itself.
+replica -- one read as text, see ~org-moor-text-extensions~, or what a replica
+was made readable as.  A replica is not changed once taken, so its lines
+stay where they were.  Following the link opens the replica there; without a
+replica, the origin.  A ~moor:ID~ link with no place is the source itself.
 A link of a few words, ~moor:ID::TEXT~, as places were written before,
 still finds them by searching.
 
@@ -332,8 +333,8 @@ you agree.
 Dired buffer, newest first, so each file is decided while it is still
 known.  Everything Dired does works there.  ~org-moor-put-away~ moves the
 file at point, or the marked ones, into a directory of yours;
-~org-moor-put-away-and-take~ also takes each from there as a copy.  A
-directory is renamed as work goes on, so what Org points to is the copy
+~org-moor-put-away-and-take~ also takes each from there as a replica.  A
+directory is renamed as work goes on, so what Org points to is the replica
 among the sources, never the directory.
 
 ** Writing, and reading beside it
@@ -343,7 +344,7 @@ org-dock~ -- into a copy of its own, written back on ~C-c C-c~.  What is
 noted from a source goes there.
 
 ~org-moor-noter~, on a heading, reads a source it links to, or one a
-heading under it does, beside it, as org-noter does: a PDF, or a copy read
+heading under it does, beside it, as org-noter does: a PDF, or a replica read
 as text, opens on the left in ~org-moor-noter-mode~, and the heading on the
 right, taken out to be written in.  A PDF is shown by pdf-tools when it is
 there, else by DocView; a text is read-only, with its line marked.  The
@@ -354,7 +355,7 @@ keys you move with are left alone -- Evil's among them -- ~i~ notes, and
 line point is on -- as a link, and the text selected, quoted under it.
 They go in the heading after the line its point is on, so notes and
 places alternate as you read and write.  The heading is the one beside;
-for a copy opened by following a link, the heading the link was in; else
+for a replica opened by following a link, the heading the link was in; else
 one that links to the source, asked for.  A file that is not a source yet
 is taken first.  In an org-noter session it calls ~org-noter-insert-note~
 instead, so one key serves wherever you read.
@@ -362,10 +363,10 @@ instead, so one key serves wherever you read.
 An agent asked to help with a heading taken out -- ~C-c C-;~ in its copy,
 see org-dock -- is handed the files of the sources it links to, to read:
 text, Markdown and PDF as they are, the others made readable once by
-~org-moor-readable-converters~ (pandoc, to Markdown beside the copy).  It
+~org-moor-readable-converters~ (pandoc, to Markdown beside the replica).  It
 is told which sources they are, and to cite a place as the links here do.
 
-~org-moor-open-source~, on a heading, opens the copy of a source it, or a
+~org-moor-open-source~, on a heading, opens the replica of a source it, or a
 heading under it, links to, the prefix as for a link;
 ~org-moor-open-origin~, where it came from.  A URL opens in the browser,
 but a Word, Excel or PowerPoint document on a web server -- a document
@@ -373,7 +374,7 @@ library -- opens from there in its Office application, by the Office URI
 schemes ~org-moor-office-url-schemes~ names, rather than being
 downloaded.
 
-~org-moor-noter~ reads the copy as Emacs can: a PDF, a text, a page in
+~org-moor-noter~ reads the replica as Emacs can: a PDF, a text, a page in
 EWW, where a place is a text selected, and Word, PowerPoint and the like
 as what ~org-moor-readable-converters~ makes them, whose lines are noted
 and found again.
@@ -381,14 +382,14 @@ and found again.
 ** Titles
 
 A source's title is in its record, out of the way, so ~org-moor-set-title~
-gives it another: on a link to it, in a copy of it, or on a heading
+gives it another: on a link to it, in a replica of it, or on a heading
 linking to it.  The links in the buffer named by the old title are named
 by the new one, their places kept; links elsewhere keep their names,
 which are only names.
 
-** Letting copies go
+** Letting replicas go
 
-~org-moor-prune~ lists the sources with a copy, largest first, with when
+~org-moor-prune~ lists the sources with a replica, largest first, with when
 each was taken, whether its origin is a URL, and whether anything still
 links to it.  ~d~ marks, ~u~ unmarks, ~x~ lets the marked ones go: the
 bytes are deleted, and the record, with the origin, stays.  ~t~ sets the title,

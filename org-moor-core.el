@@ -15,7 +15,7 @@
 ;;
 ;; A *source* is a directory in a *sources directory*, named by the
 ;; source's id the way `org-attach' names its own: the id's first two
-;; characters, and the rest below them.  In it are the source's *copy*, if
+;; characters, and the rest below them.  In it are the source's *replica*, if
 ;; it has one, and its *record*, `moor.org', saying what it is: a title, and
 ;; where it came from, how and when.  Nothing in a sources directory asks to
 ;; be filed, and nothing in an Org file has to be a source's: what you write
@@ -74,8 +74,8 @@ a document's in a directory of its own, say -- adds one here.")
   "The properties of a record, by the keys a RECORD plist has them under.
 Origin: where the source was when it was taken, a URL or a path, kept
 after it changes or is gone.  Via: how it arrived, as a word: web, file,
-mail, chat, clipboard.  File: the copy's name in the source's directory.  Taken:
-when, as an inactive timestamp.")
+mail, chat, clipboard.  File: the replica's name in the source's
+directory.  Taken: when, as an inactive timestamp.")
 
 ;;;; Where sources are
 
@@ -130,15 +130,15 @@ grows long."
           (goto-char (point-min))
           (when (re-search-forward "^#\\+title:[ \t]*\\(.*?\\)[ \t]*$" nil t)
             (setq record (plist-put record :title (match-string 1))))
-          (let ((copy (and (plist-get record :file)
+          (let ((replica (and (plist-get record :file)
                            (expand-file-name (plist-get record :file) dir))))
-            (plist-put record :copy (and copy (file-exists-p copy) copy))))))))
+            (plist-put record :replica (and replica (file-exists-p replica) replica))))))))
 
 (defun org-moor-record (id &optional sources)
   "Return source ID as a plist, read from its record, or nil.
 In SOURCES, by default this buffer's sources directory.  Keys are :id,
-:title, :origin, :via, :file, :taken, :dir, its directory, and :copy,
-the copy's path while it is there."
+:title, :origin, :via, :file, :taken, :dir, its directory, and :replica,
+the replica's path while it is there."
   (org-moor--record-in (org-moor-source-directory id sources) id))
 
 (defun org-moor-sources-in (sources)
@@ -182,7 +182,7 @@ another is, still finds its source on a machine that has both."
 (defun org-moor-new-source (title origin via &optional sources)
   "Make a source titled TITLE from ORIGIN, arrived VIA, and return its record.
 In SOURCES, by default this buffer's sources directory.  Its directory
-and record are made; its copy is for the caller to put there."
+and record are made; its replica is for the caller to put there."
   (let* ((id (org-id-uuid))
          (dir (org-moor-source-directory id sources))
          (record (list :id id :dir dir :title title :origin origin
@@ -224,8 +224,8 @@ written, so that anything else written in the record stays."
         (write-region nil nil file nil 'silent))))
   (let ((record (plist-put record key value)))
     (if (eq key :file)
-        (let ((copy (expand-file-name value (plist-get record :dir))))
-          (plist-put record :copy (and (file-exists-p copy) copy)))
+        (let ((replica (expand-file-name value (plist-get record :dir))))
+          (plist-put record :replica (and (file-exists-p replica) replica)))
       record)))
 
 ;;;; Places
@@ -248,7 +248,7 @@ to search for, as links written before lines were used have, or nil."
 
 (defcustom org-moor-text-extensions
   '("txt" "md" "markdown" "org" "csv" "tsv" "json" "yaml" "yml" "rst" "tex" "log")
-  "Extensions of copies Emacs reads as text, where a place is a line."
+  "Extensions of replicas Emacs reads as text, where a place is a line."
   :type '(repeat string)
   :group 'org-moor)
 
@@ -261,8 +261,8 @@ to search for, as links written before lines were used have, or nil."
   (equal (org-moor-extension file) "pdf"))
 
 (defcustom org-moor-eww-extensions '("html" "htm")
-  "Extensions of copies read in EWW, where a place is a text.
-Only where a copy is read beside its heading, or a text in it is sought;
+  "Extensions of replicas read in EWW, where a place is a text.
+Only where a replica is read beside its heading, or a text in it is sought;
 otherwise a page is opened as `org-file-apps' says."
   :type '(repeat string)
   :group 'org-moor)
@@ -316,9 +316,9 @@ Leave point where it is, and say so, when TEXT is not found."
     ("epub" . org-moor-pandoc)
     ("html" . org-moor-pandoc)
     ("htm" . org-moor-pandoc))
-  "How a copy is made readable by an agent, by extension.
-Each function is called with the copy's path and returns the path of a
-file to read in its place.  A copy whose extension is not here is read
+  "How a replica is made readable by an agent, by extension.
+Each function is called with the replica's path and returns the path of a
+file to read in its place.  A replica whose extension is not here is read
 as it is: text, Markdown and PDF need nothing."
   :type '(alist :key-type string :value-type function)
   :group 'org-moor)
@@ -337,27 +337,27 @@ as it is: text, Markdown and PDF need nothing."
 
 (defun org-moor-pandoc (file)
   "Return FILE turned into Markdown by pandoc, beside it.
-Made once, and again only when FILE is newer; it goes with the copy."
+Made once, and again only when FILE is newer; it goes with the replica."
   (let ((md (concat file ".md")))
     (unless (file-newer-than-file-p md file)
       (org-moor--process-string "pandoc" "--to=gfm" "--wrap=none" "-o" md file))
     md))
 
-(defun org-moor-readable (copy)
-  "Return the file an agent reads for COPY."
-  (let ((fn (cdr (assoc (org-moor-extension copy) org-moor-readable-converters))))
-    (if fn (funcall fn copy) copy)))
+(defun org-moor-readable (replica)
+  "Return the file an agent reads for REPLICA."
+  (let ((fn (cdr (assoc (org-moor-extension replica) org-moor-readable-converters))))
+    (if fn (funcall fn replica) replica)))
 
-(defun org-moor--made-readable (copy)
-  "Return the file COPY was made readable as, if it was, or nil."
-  (and (assoc (org-moor-extension copy) org-moor-readable-converters)
-       (let ((md (concat copy ".md")))
+(defun org-moor--made-readable (replica)
+  "Return the file REPLICA was made readable as, if it was, or nil."
+  (and (assoc (org-moor-extension replica) org-moor-readable-converters)
+       (let ((md (concat replica ".md")))
          (and (file-exists-p md) md))))
 
 ;;;; Opening
 
 (make-obsolete-variable 'org-moor-open-function
-                        "a copy is opened by `org-open-file', as `org-file-apps' says."
+                        "a replica is opened by `org-open-file', as `org-file-apps' says."
                         "0.3")
 
 (defun org-moor--eww-open (file then)
@@ -372,11 +372,11 @@ the buffer before then is lost when it is drawn."
     (add-hook 'eww-after-render-hook hook)
     (eww-open-file file)))
 
-(defun org-moor-open-copy (file &optional place then how)
+(defun org-moor-open-replica (file &optional place then how)
   "Open FILE, at PLACE when there is one and Emacs can show it.
-PLACE is a page of a PDF; a line of a copy read as text, or of what a
-copy was made readable as, where an agent read it; or a text to find,
-in a copy read as text or in a page, which EWW shows.  Without PLACE,
+PLACE is a page of a PDF; a line of a replica read as text, or of what a
+replica was made readable as, where an agent read it; or a text to find,
+in a replica read as text or in a page, which EWW shows.  Without PLACE,
 FILE is opened by `org-open-file' as a `file:' link is, HOW being its
 IN-EMACS: nil for what `org-file-apps' says, (4) for Emacs, (16) for
 the program the system opens it with, which is so with PLACE too.
@@ -412,15 +412,15 @@ shown; not when FILE is opened outside Emacs."
         (when (and then (equal (org-moor-shown-file) (expand-file-name file)))
           (funcall then))))))
 
-(defun org-moor-file-to-read (copy)
-  "Return the file COPY is read beside its heading as, or nil.
-COPY itself when Emacs shows it -- a PDF, a text, a page in EWW -- else
+(defun org-moor-file-to-read (replica)
+  "Return the file REPLICA is read beside its heading as, or nil.
+REPLICA itself when Emacs shows it -- a PDF, a text, a page in EWW -- else
 what it is made readable as, by `org-moor-readable-converters'; nil when
 it is neither."
-  (cond ((or (org-moor-text-file-p copy) (org-moor-pdf-p copy) (org-moor-eww-p copy))
-         copy)
-        ((assoc (org-moor-extension copy) org-moor-readable-converters)
-         (org-moor-readable copy))))
+  (cond ((or (org-moor-text-file-p replica) (org-moor-pdf-p replica) (org-moor-eww-p replica))
+         replica)
+        ((assoc (org-moor-extension replica) org-moor-readable-converters)
+         (org-moor-readable replica))))
 
 (defun org-moor-open-to-read (file then)
   "Show FILE, from `org-moor-file-to-read', and call THEN in its buffer."
@@ -462,7 +462,7 @@ the browser."
 (defun org-moor--open-origin (origin &optional how)
   "Open ORIGIN: a URL in the browser, a path where it still is.
 An Office document's URL in its application instead; see
-`org-moor-office-url-schemes'.  HOW is as `org-moor-open-copy' has it,
+`org-moor-office-url-schemes'.  HOW is as `org-moor-open-replica' has it,
 for a path."
   (cond ((string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]+:[^\\]" origin)
          ;; Percent-encoded, for a character outside ASCII can be read
@@ -476,7 +476,7 @@ for a path."
         (t (user-error "org-moor: the origin is gone: %s" origin))))
 
 (defvar-local org-moor--read-for nil
-  "In a buffer showing a copy, a marker at the heading it was opened from.
+  "In a buffer showing a replica, a marker at the heading it was opened from.
 Where what is noted from it is written; see `org-moor-insert-place'.")
 
 (defun org-moor--heading-marker ()
@@ -488,28 +488,28 @@ Where what is noted from it is written; see `org-moor-insert-place'.")
            (point-marker)))))
 
 (defun org-moor-open-record (record &optional place from how)
-  "Open the copy of RECORD at PLACE, or else its origin, saying so.
-FROM, a marker at a heading, is kept in the copy's buffer as the heading
-it is read for.  HOW is as `org-moor-open-copy' has it."
+  "Open the replica of RECORD at PLACE, or else its origin, saying so.
+FROM, a marker at a heading, is kept in the replica's buffer as the heading
+it is read for.  HOW is as `org-moor-open-replica' has it."
   (cond
-   ((plist-get record :copy)
-    (org-moor-open-copy (plist-get record :copy) place
+   ((plist-get record :replica)
+    (org-moor-open-replica (plist-get record :replica) place
                         (and from (lambda () (setq org-moor--read-for from)))
                         how))
    ((plist-get record :origin)
     (org-moor--open-origin (plist-get record :origin) how)
     ;; Said last, so that nothing said in opening hides it: what is open
-    ;; now is the original, not a copy that can come to no harm.
+    ;; now is the original, not a replica that can come to no harm.
     (message "%s" (propertize
-                   (format "org-moor: no copy of %s; opened the original: %s"
+                   (format "org-moor: no replica of %s; opened the original: %s"
                            (plist-get record :title) (plist-get record :origin))
                    'face 'warning)))
-   (t (user-error "org-moor: %s has neither copy nor origin" (plist-get record :id)))))
+   (t (user-error "org-moor: %s has neither replica nor origin" (plist-get record :id)))))
 
 (defun org-moor-link-follow (path arg)
-  "Open the place PATH: the copy at its page or line, or else the origin.
+  "Open the place PATH: the replica at its page or line, or else the origin.
 ARG is the prefix `org-open-at-point' was given, as for a `file:' link:
-none opens the copy as `org-file-apps' says, \\[universal-argument] in Emacs,
+none opens the replica as `org-file-apps' says, \\[universal-argument] in Emacs,
 two in the program the system opens it with."
   (pcase-let* ((`(,id . ,place) (org-moor-link-parse path))
                (record (or (org-moor-find-record id)
@@ -614,8 +614,8 @@ The place alone, in a file `org-moor-place-alone-p' says so of."
     (when record
       (org-moor-link-name record place
                           (cond ((stringp place) 'text)
-                                ((and (plist-get record :copy)
-                                      (org-moor-pdf-p (plist-get record :copy)))
+                                ((and (plist-get record :replica)
+                                      (org-moor-pdf-p (plist-get record :replica)))
                                  'page)
                                 (t 'line))
                           (org-moor-place-alone-p)))))
@@ -624,7 +624,7 @@ The place alone, in a file `org-moor-place-alone-p' says so of."
 
 (defun org-moor-link-summary (path)
   "Return a line saying what the source of the `moor:' link PATH has.
-Whether it has a copy -- the one thing a link does not show, and the
+Whether it has a replica -- the one thing a link does not show, and the
 one that matters, since without it following the link opens the
 original -- and where it came from, how and when."
   (pcase-let* ((`(,id . ,_place) (org-moor-link-parse path))
@@ -634,7 +634,7 @@ original -- and where it came from, how and when."
                             (abbreviate-file-name (org-moor-sources)))
                     'face 'error)
       (let* ((file (plist-get record :file))
-             (copy (plist-get record :copy))
+             (replica (plist-get record :replica))
              (origin (plist-get record :origin))
              (had (string-join
                    (delq nil (list (plist-get record :via)
@@ -642,11 +642,11 @@ original -- and where it came from, how and when."
                                         (string-trim (plist-get record :taken) "\\[" "\\]"))))
                    " "))
              (what (cond
-                    (copy (format "copy %s (%s)" file
+                    (replica (format "replica %s (%s)" file
                                   (file-size-human-readable
-                                   (file-attribute-size (file-attributes copy)))))
-                    (file (propertize (format "copy %s is gone" file) 'face 'warning))
-                    (t (propertize "no copy" 'face 'warning)))))
+                                   (file-attribute-size (file-attributes replica)))))
+                    (file (propertize (format "replica %s is gone" file) 'face 'warning))
+                    (t (propertize "no replica" 'face 'warning)))))
         (string-join (delq nil (list (concat "moor: " what)
                                      (and (not (string-empty-p had)) had)
                                      (or origin (propertize "no origin" 'face 'warning))))
@@ -704,26 +704,26 @@ In a property too, where Org does not see a link as one."
   (when-let* ((path (org-moor--link-path-at (point))))
     (car (org-moor-link-parse path))))
 
-;;;; Handed to an agent with a copy
+;;;; Handed to an agent with a replica
 
 (defun org-moor-link-file (type path)
   "Return the file a `moor:' link of PATH points to, for an agent to read.
-TYPE is the link's type.  As (FILE . NAME): the copy, made readable, and
+TYPE is the link's type.  As (FILE . NAME): the replica, made readable, and
 the source named by its id and its title, which a place is cited by.
-Nil when the source has no copy."
+Nil when the source has no replica."
   (when (equal type "moor")
     (let* ((record (ignore-errors (org-moor-find-record (car (org-moor-link-parse path)))))
-           (copy (and record (plist-get record :copy))))
-      (and copy
+           (replica (and record (plist-get record :replica))))
+      (and replica
            (cons
-            ;; A copy that cannot be made readable is handed over as it is,
+            ;; A replica that cannot be made readable is handed over as it is,
             ;; rather than stopping the asking.
             (condition-case err
-                (org-moor-readable copy)
+                (org-moor-readable replica)
               (error
                (message "org-moor: %s handed over as it is: %s"
-                        (file-name-nondirectory copy) (error-message-string err))
-               copy))
+                        (file-name-nondirectory replica) (error-message-string err))
+               replica))
             (format "moor:%s  %s" (plist-get record :id) (or (plist-get record :title) "")))))))
 
 (defvar server-process)
@@ -776,7 +776,7 @@ are named by it alone where `org-moor-place-alone-p' says so of that file."
      "command, which prints a link to it, [[moor:ID][TITLE]]:\n\n"
      "    " (org-moor-batch-command (org-moor-sources origin)) "\n"
      (if (org-moor--server-file)
-         "\nA web page's copy arrives after the link, so read it a little later.\n"
+         "\nA web page's replica arrives after the link, so read it a little later.\n"
        ""))))
 
 (add-hook 'org-dock-link-file-functions #'org-moor-link-file)

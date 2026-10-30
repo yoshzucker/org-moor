@@ -12,8 +12,8 @@
 (require 'eww)
 
 (defmacro org-moor-test--with-source (&rest body)
-  "Run BODY in notes whose heading Topic links to a source with a text copy.
-`copy' is the copy's path, `record' the source, `orig' the file it was
+  "Run BODY in notes whose heading Topic links to a source with a text replica.
+`replica' is the replica's path, `record' the source, `orig' the file it was
 taken from, and `notes' the notes' buffer, saved."
   (declare (indent 0))
   `(org-moor-test--with-notes "* Topic\n"
@@ -24,20 +24,20 @@ taken from, and `notes' the notes' buffer, saved."
        (with-temp-file orig (insert "rule one\nrule two\n"))
        (org-moor-test--titles-as-given
          (let* ((record (org-moor-record (org-moor-test--id-at (org-moor-take-file orig))))
-                (copy (plist-get record :copy)))
+                (replica (plist-get record :replica)))
            (save-buffer)
            (goto-char (point-min))
            ,@body)))))
 
-(ert-deftest org-moor-test-copy-record ()
-  "A copy, and what it was made readable as, are known as their source's
+(ert-deftest org-moor-test-replica-record ()
+  "A replica, and what it was made readable as, are known as their source's
 by where they lie."
   (org-moor-test--with-source
-    (should (equal (plist-get (org-moor-copy-record copy) :id) (plist-get record :id)))
-    (let ((md (concat copy ".md")))
+    (should (equal (plist-get (org-moor-replica-record replica) :id) (plist-get record :id)))
+    (let ((md (concat replica ".md")))
       (with-temp-file md)
-      (should (equal (plist-get (org-moor-copy-record md) :id) (plist-get record :id))))
-    (should-not (org-moor-copy-record orig))))
+      (should (equal (plist-get (org-moor-replica-record md) :id) (plist-get record :id))))
+    (should-not (org-moor-replica-record orig))))
 
 (ert-deftest org-moor-test-place-string ()
   (let ((record '(:id "ID" :title "Rules")))
@@ -87,14 +87,14 @@ is the text selected."
         (insert "<html><body><p>rule one</p><p>rule two</p></body></html>"))
       (org-moor-test--titles-as-given
         (let* ((record (org-moor-record (org-moor-test--id-at (org-moor-take-file orig))))
-               (copy (plist-get record :copy)))
+               (replica (plist-get record :replica)))
           (save-buffer)
           (goto-char (point-min))
           (org-moor-link-follow (format "%s::rule two" (plist-get record :id)) nil)
           (with-timeout (5 (ert-fail "EWW drew nothing"))
             (while (not (and (derived-mode-p 'eww-mode) org-moor--read-for))
               (accept-process-output nil 0.05)))
-          (should (equal (org-moor-shown-file) copy))
+          (should (equal (org-moor-shown-file) replica))
           (should (looking-at "rule two"))
           (set-mark (point)) (end-of-line) (activate-mark)
           (org-moor-insert-place)
@@ -104,11 +104,11 @@ is the text selected."
                    (with-current-buffer (window-buffer (next-window)) (buffer-string)))))))))
 
 (ert-deftest org-moor-test-insert-place-where-opened-from ()
-  "A place noted in a copy opened from a heading goes into that heading,
+  "A place noted in a replica opened from a heading goes into that heading,
 taken out to be written in, after the line its point is on."
   (org-moor-test--with-source
     (org-moor-link-follow (format "%s::2" (plist-get record :id)) nil)
-    (should (equal buffer-file-name copy))
+    (should (equal buffer-file-name replica))
     (set-mark (point)) (end-of-line) (activate-mark)
     (org-moor-insert-place)
     (let ((dock (window-buffer (next-window))))
@@ -125,7 +125,7 @@ taken out to be written in, after the line its point is on."
     (should (string-match-p "rules l\\. 1" (with-current-buffer notes (buffer-string))))))
 
 (ert-deftest org-moor-test-noter-text ()
-  "Reading beside the heading: the copy read-only on the left, the heading
+  "Reading beside the heading: the replica read-only on the left, the heading
 taken out on the right, `i' noting there, `q' writing it back."
   (org-moor-test--with-source
     (goto-char (point-max))
@@ -133,7 +133,7 @@ taken out on the right, `i' noting there, `q' writing it back."
     (save-buffer)
     (goto-char (point-min))
     (org-moor-noter)
-    (should (equal buffer-file-name copy))
+    (should (equal buffer-file-name replica))
     (should org-moor-noter-mode)
     (should buffer-read-only)
     (should (eq (key-binding "i") #'org-moor-insert-place))
@@ -152,23 +152,23 @@ taken out on the right, `i' noting there, `q' writing it back."
     (with-current-buffer notes
       (should (string-match-p "rules l\\. 2\\]\\]\nSecond rule\\.\n\\* Next" (buffer-string)))
       (should-not (buffer-modified-p)))
-    (with-current-buffer (find-file-noselect copy)
+    (with-current-buffer (find-file-noselect replica)
       (should-not org-moor-noter-mode)
       (should-not buffer-read-only))))
 
 (ert-deftest org-moor-test-open-source ()
-  "A copy is opened by `org-open-file', given the prefix as a `file:' link
+  "A replica is opened by `org-open-file', given the prefix as a `file:' link
 is; the origin, by its own command."
   (org-moor-test--with-source
     (let (opened)
       (cl-letf (((symbol-function 'org-open-file)
                  (lambda (f &optional how &rest _) (setq opened (list f how)))))
         (org-moor-open-source)
-        (should (equal opened (list copy nil)))
+        (should (equal opened (list replica nil)))
         (org-moor-open-source '(16))
-        (should (equal opened (list copy '(16))))
+        (should (equal opened (list replica '(16))))
         (org-moor-link-follow (format "%s::2" (plist-get record :id)) '(16))
-        (should (equal opened (list copy '(16))))
+        (should (equal opened (list replica '(16))))
         (org-moor-open-origin)
         (should (equal opened (list orig nil)))))))
 
@@ -205,11 +205,11 @@ and its lines are noted."
       (call-process "pandoc" nil nil nil "-o" orig md)
       (org-moor-test--titles-as-given
         (let* ((record (org-moor-record (org-moor-test--id-at (org-moor-take-file orig))))
-               (copy (plist-get record :copy)))
+               (replica (plist-get record :replica)))
           (save-buffer)
           (goto-char (point-min))
           (org-moor-noter)
-          (should (equal buffer-file-name (concat copy ".md")))
+          (should (equal buffer-file-name (concat replica ".md")))
           (should org-moor-noter-mode)
           (should (re-search-forward "rule two" nil t))
           (org-moor-insert-place)
@@ -219,29 +219,29 @@ and its lines are noted."
                    (with-current-buffer (window-buffer (next-window)) (buffer-string))))
           (org-moor-noter-quit))))))
 
-(ert-deftest org-moor-test-set-copy ()
-  "A file given to a source becomes its copy: moved from where things pile
-up, the old copy and what it was made readable as let go."
+(ert-deftest org-moor-test-set-replica ()
+  "A file given to a source becomes its replica: moved from where things pile
+up, the old replica and what it was made readable as let go."
   (org-moor-test--with-source
     (let* ((pile (expand-file-name "pile/" dir))
            (org-moor-move-directories (list pile))
            (new (expand-file-name "rules v2.txt" pile))
-           (md (concat copy ".md")))
+           (md (concat replica ".md")))
       (make-directory pile)
       (with-temp-file new (insert "rule three\n"))
       (with-temp-file md)
       (cl-letf (((symbol-function 'y-or-n-p) #'always))
-        (org-moor-set-copy record new))
+        (org-moor-set-replica record new))
       (let ((now (org-moor-record (plist-get record :id))))
-        (should (equal (file-name-nondirectory (plist-get now :copy)) "rules v2.txt"))
-        (should (file-exists-p (plist-get now :copy))))
+        (should (equal (file-name-nondirectory (plist-get now :replica)) "rules v2.txt"))
+        (should (file-exists-p (plist-get now :replica))))
       (should-not (file-exists-p new))
-      (should-not (file-exists-p copy))
+      (should-not (file-exists-p replica))
       (should-not (file-exists-p md)))))
 
-(ert-deftest org-moor-test-keep-copy ()
-  "Sources linked under a heading with only their origins are given copies
-from them: a URL fetched, a path copied; one with a copy is left alone."
+(ert-deftest org-moor-test-keep-replica ()
+  "Sources linked under a heading with only their origins are given replicas
+from them: a URL fetched, a path copied; one with a replica is left alone."
   (org-moor-test--with-source
     (let* ((sources (org-moor-sources))
            (page (org-moor-new-source "Wiki" "https://example.com/wiki" 'web sources))
@@ -250,13 +250,13 @@ from them: a URL fetched, a path copied; one with a copy is left alone."
       (insert (org-moor-link page) "\n" (org-moor-link file) "\n")
       (goto-char (point-min))
       (org-moor-test--serving "text/html" nil "<html>wiki</html>"
-        (org-moor-keep-copy (org-moor--records-to-keep))
+        (org-moor-keep-replica (org-moor--records-to-keep))
         (should (equal fetched "https://example.com/wiki")))
       (should (equal (plist-get (org-moor-record (plist-get page :id)) :file) "page.html"))
       (let ((now (org-moor-record (plist-get file :id))))
-        (should (equal (file-name-nondirectory (plist-get now :copy)) "rules.txt"))
+        (should (equal (file-name-nondirectory (plist-get now :replica)) "rules.txt"))
         (should (file-exists-p orig)))
-      (should (equal (plist-get (org-moor-record (plist-get record :id)) :copy) copy)))))
+      (should (equal (plist-get (org-moor-record (plist-get record :id)) :replica) replica)))))
 
 (ert-deftest org-moor-test-set-title ()
   "A source given another title has it in its record, and in the links here
@@ -285,16 +285,16 @@ named by the old one, their places kept."
                      (plist-get record :title))))))
 
 (ert-deftest org-moor-test-prune ()
-  "The copies are listed from the sources, with whether anything links to
+  "The replicas are listed from the sources, with whether anything links to
 them; letting one go keeps its record."
   (org-moor-test--with-source
-    (let ((copies (org-moor-copies)))
-      (should (= (length copies) 1))
-      (should (= (plist-get (car copies) :size) (length "rule one\nrule two\n")))
-      (should (plist-get (car copies) :linked))
-      (org-moor-let-go (car copies))
-      (should-not (file-exists-p copy))
-      (should-not (org-moor-copies))
+    (let ((replicas (org-moor-replicas)))
+      (should (= (length replicas) 1))
+      (should (= (plist-get (car replicas) :size) (length "rule one\nrule two\n")))
+      (should (plist-get (car replicas) :linked))
+      (org-moor-let-go (car replicas))
+      (should-not (file-exists-p replica))
+      (should-not (org-moor-replicas))
       (should (equal (plist-get (org-moor-record (plist-get record :id)) :origin) orig)))))
 
 (provide 'org-moor-place-test)

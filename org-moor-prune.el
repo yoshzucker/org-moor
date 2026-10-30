@@ -1,4 +1,4 @@
-;;; org-moor-prune.el --- Let copies go, choosing which  -*- lexical-binding: t; -*-
+;;; org-moor-prune.el --- Let replicas go, choosing which  -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 yoshzucker
 
@@ -11,14 +11,14 @@
 
 ;; The sources grow: a deck or a manual is megabytes, and Org files that
 ;; are meant to travel should not have to carry all of them.  Letting a
-;; copy go is safe when what matters is kept -- what you wrote, and the
+;; replica go is safe when what matters is kept -- what you wrote, and the
 ;; source's record with its origin -- and those stay.  Only the bytes go,
 ;; and a link to the source opens its origin from then on.
 ;;
-;; `org-moor-prune' lists the sources with a copy, largest first, read from
+;; `org-moor-prune' lists the sources with a replica, largest first, read from
 ;; the sources directory itself: when each was taken, whether its origin
 ;; is a URL that may still answer, and whether anything still links to it.
-;; Mark with d, unmark with u, and x lets the marked copies go.  t gives a
+;; Mark with d, unmark with u, and x lets the marked replicas go.  t gives a
 ;; source another title, and RET opens it.
 
 ;;; Code:
@@ -32,7 +32,7 @@
 
 (defun org-moor--kept (record)
   "Return the files kept for RECORD but its record.
-Its copy, and what was made readable of it."
+Its replica, and what was made readable of it."
   (seq-remove (lambda (f) (equal (file-name-nondirectory f) org-moor-record-file))
               (directory-files (plist-get record :dir) t "\\`[^.]")))
 
@@ -47,8 +47,8 @@ hash table."
             (puthash id t ids)))))
     ids))
 
-(defun org-moor-copies (&optional sources)
-  "Return the sources in SOURCES with a copy, as records.
+(defun org-moor-replicas (&optional sources)
+  "Return the sources in SOURCES with a replica, as records.
 Each also has :size, the bytes kept for it, and :linked, whether
 anything links to it.  SOURCES is this buffer's sources directory when
 nil."
@@ -64,7 +64,7 @@ nil."
                                    :linked (gethash (plist-get record :id) linked))))))
 
 (defun org-moor-let-go (record)
-  "Delete the copy of RECORD, and what was made readable of it.
+  "Delete the replica of RECORD, and what was made readable of it.
 Its record stays, origin and all, and links to it open the origin."
   (dolist (file (org-moor--kept record))
     (if (file-directory-p file)
@@ -73,15 +73,15 @@ Its record stays, origin and all, and links to it open the origin."
 
 ;;;; The list
 
-(defvar-local org-moor-prune--copies nil
-  "The copies listed.")
+(defvar-local org-moor-prune--replicas nil
+  "The replicas listed.")
 
 (defvar-local org-moor-prune--sources nil
   "The sources directory listed.")
 
 (defun org-moor-prune--entries ()
-  "Return the list's entries, largest copy first."
-  (setq org-moor-prune--copies (org-moor-copies org-moor-prune--sources))
+  "Return the list's entries, largest replica first."
+  (setq org-moor-prune--replicas (org-moor-replicas org-moor-prune--sources))
   (mapcar
    (lambda (c)
      (let ((origin (or (plist-get c :origin) "")))
@@ -94,7 +94,7 @@ Its record stays, origin and all, and links to it open the origin."
                      (if (string-match-p "\\`https?:" origin) "url" "")
                      (if (plist-get c :linked) "" "none")
                      (or (plist-get c :title) "")))))
-   (sort org-moor-prune--copies
+   (sort org-moor-prune--replicas
          (lambda (a b) (> (plist-get a :size) (plist-get b :size))))))
 
 (defvar org-moor-prune-mode-map
@@ -109,7 +109,7 @@ Its record stays, origin and all, and links to it open the origin."
   "Keys of the prune list.")
 
 (define-derived-mode org-moor-prune-mode tabulated-list-mode "Moor-Prune"
-  "Sources with a copy, to choose which copies to let go."
+  "Sources with a replica, to choose which replicas to let go."
   (setq tabulated-list-format [("Size" 9 nil :right-align t)
                                ("Taken" 11 t)
                                ("Origin" 7 t)
@@ -119,47 +119,47 @@ Its record stays, origin and all, and links to it open the origin."
         tabulated-list-entries #'org-moor-prune--entries)
   (tabulated-list-init-header))
 
-(defun org-moor-prune--copy-at-point ()
+(defun org-moor-prune--replica-at-point ()
   "Return the source on this line."
   (let ((id (tabulated-list-get-id)))
-    (seq-find (lambda (c) (equal (plist-get c :id) id)) org-moor-prune--copies)))
+    (seq-find (lambda (c) (equal (plist-get c :id) id)) org-moor-prune--replicas)))
 
 (defun org-moor-prune-mark ()
-  "Mark this copy to be let go."
+  "Mark this replica to be let go."
   (interactive)
   (tabulated-list-put-tag "D" t))
 
 (defun org-moor-prune-unmark ()
-  "Unmark this copy."
+  "Unmark this replica."
   (interactive)
   (tabulated-list-put-tag " " t))
 
 (defun org-moor-prune-visit ()
-  "Open this source's copy."
+  "Open this source's replica."
   (interactive)
-  (org-moor-open-record (org-moor-prune--copy-at-point)))
+  (org-moor-open-record (org-moor-prune--replica-at-point)))
 
 (defun org-moor-prune-set-title (title)
   "Give this source the title TITLE."
-  (interactive (list (read-string "Title: " (plist-get (org-moor-prune--copy-at-point) :title))))
-  (org-moor-record-set (org-moor-prune--copy-at-point) :title title)
+  (interactive (list (read-string "Title: " (plist-get (org-moor-prune--replica-at-point) :title))))
+  (org-moor-record-set (org-moor-prune--replica-at-point) :title title)
   (tabulated-list-revert))
 
 (defun org-moor-prune-set-origin (origin)
   "Give this source the origin ORIGIN."
-  (interactive (list (read-string "Origin: " (plist-get (org-moor-prune--copy-at-point) :origin))))
-  (org-moor-set-origin (list (org-moor-prune--copy-at-point)) origin)
+  (interactive (list (read-string "Origin: " (plist-get (org-moor-prune--replica-at-point) :origin))))
+  (org-moor-set-origin (list (org-moor-prune--replica-at-point)) origin)
   (tabulated-list-revert))
 
 (defun org-moor-prune-execute ()
-  "Let the marked copies go."
+  "Let the marked replicas go."
   (interactive)
   (let (marked)
     (save-excursion
       (goto-char (point-min))
       (while (not (eobp))
         (when (eq (char-after) ?D)
-          (push (org-moor-prune--copy-at-point) marked))
+          (push (org-moor-prune--replica-at-point) marked))
         (forward-line 1)))
     (if (null marked)
         (message "Nothing marked")
@@ -174,7 +174,7 @@ Its record stays, origin and all, and links to it open the origin."
 
 ;;;###autoload (autoload 'org-moor-prune "org-moor" nil t)
 (defun org-moor-prune ()
-  "List the copies of this buffer's sources, largest first, to let some go."
+  "List the replicas of this buffer's sources, largest first, to let some go."
   (interactive)
   (let ((sources (org-moor-sources)))
     (with-current-buffer (get-buffer-create "*org-moor prune*")

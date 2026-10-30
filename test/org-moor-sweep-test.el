@@ -80,7 +80,7 @@
       (goto-char (point-min))
       (should (re-search-forward "^\\[\\[moor:\\([^]]+\\)\\]\\[minutes\\]\\]$" nil t))
       (let ((record (org-moor-record (match-string 1))))
-        (should (plist-get record :copy))
+        (should (plist-get record :replica))
         (should (equal (plist-get record :origin) (expand-file-name "minutes.docx" proj)))))))
 
 (ert-deftest org-moor-test-sweep-lists-the-pile ()

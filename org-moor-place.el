@@ -11,19 +11,19 @@
 
 ;; Two directions between a heading and a source it links to.
 ;;
-;; From the source: reading a copy, `org-moor-insert-place' notes the page
+;; From the source: reading a replica, `org-moor-insert-place' notes the page
 ;; shown, or the line point is on, as a link -- and what is selected,
 ;; quoted under it -- in the heading it is read for, taken out by org-dock
 ;; to be written in.  The heading is the one beside, when reading with
-;; `org-moor-noter'; else the one the copy was opened from; else one that
+;; `org-moor-noter'; else the one the replica was opened from; else one that
 ;; links to the source, asked for.
 ;;
-;; `org-moor-noter' sets the reading up as org-noter does: the copy on the
+;; `org-moor-noter' sets the reading up as org-noter does: the replica on the
 ;; left, the heading on the right, taken out to be written in, and `i' to
 ;; note.  A text is shown read-only, with its line marked, so that moving
 ;; about it cannot change it.  `q' writes the heading back.
 ;;
-;; From the heading: `org-moor-open-source' opens the copy of a source it
+;; From the heading: `org-moor-open-source' opens the replica of a source it
 ;; links to; with a prefix, the source's origin -- the page on the web, or
 ;; the file where it was.
 ;;
@@ -45,10 +45,10 @@
 
 ;;;; Which source a file is
 
-(defun org-moor-copy-record (file)
-  "Return the source whose copy FILE is, or nil.
+(defun org-moor-replica-record (file)
+  "Return the source whose replica FILE is, or nil.
 Read from where FILE lies: in a source's directory, beside its record,
-two levels below whichever sources directory that is.  What a copy was
+two levels below whichever sources directory that is.  What a replica was
 made readable as lies there too, and is the same source's."
   (let* ((dir (file-name-directory (file-truename file)))
          (id (org-moor--dir-id dir)))
@@ -152,7 +152,7 @@ Its point as shown, when it is shown, and the window's point follows."
       (when window (set-window-point window (point))))))
 
 (defvar-local org-moor-noter--session nil
-  "In a copy read by `org-moor-noter', a plist.
+  "In a replica read by `org-moor-noter', a plist.
 :windows, put back when reading stops; :dock, the buffer the heading is
 written in beside it; :own, non-nil when the noter took the heading out,
 and so writes it back when reading stops.")
@@ -164,8 +164,8 @@ The page shown, or the line point is on, as a link named by the source's
 title, and what is selected, quoted under it.  They are written in the
 heading taken out by org-dock, after the line its point is on, and the
 heading is shown.  The heading is the one beside, when reading with
-`org-moor-noter'; else the one the copy was opened from; else one that
-links to the source, asked for.  A file that is not a source's copy yet
+`org-moor-noter'; else the one the replica was opened from; else one that
+links to the source, asked for.  A file that is not a source's replica yet
 is taken first.  In an org-noter session, `org-noter-insert-note' instead."
   (interactive)
   (if (and (bound-and-true-p org-noter--session) (not (derived-mode-p 'org-mode)))
@@ -174,7 +174,7 @@ is taken first.  In an org-noter session, `org-noter-insert-note' instead."
                      (user-error "org-moor: this buffer is not a file")))
            (place (org-moor-current-place))
            (selection (org-moor-current-selection))
-           (record (org-moor-copy-record file))
+           (record (org-moor-replica-record file))
            (taken (and (not record)
                        (if (y-or-n-p "Not a source yet; take it? ")
                            (org-moor-take-file file t)
@@ -233,7 +233,7 @@ The heading at point, or a heading under it; asked for when several."
 
 ;;;###autoload (autoload 'org-moor-open-source "org-moor" nil t)
 (defun org-moor-open-source (&optional how)
-  "Open the copy of the source at point, or one the heading links to.
+  "Open the replica of the source at point, or one the heading links to.
 As following a link to it does: HOW, the prefix, nil for what
 `org-file-apps' says, \\[universal-argument] for Emacs, two for the program
 the system opens it with."
@@ -250,12 +250,22 @@ A URL in the browser; a path where it still is, HOW as for
                              (user-error "org-moor: no origin"))
                          how))
 
+;;;###autoload (autoload 'org-moor-clip-origin "org-moor" nil t)
+(defun org-moor-clip-origin ()
+  "Put the origin of the source at point, or of one the heading links to,
+on the clipboard.  Onto the kill ring too, as written in its record."
+  (interactive)
+  (let ((origin (or (plist-get (org-moor--record-here) :origin)
+                    (user-error "org-moor: no origin"))))
+    (kill-new origin)
+    (message "org-moor: on the clipboard: %s" origin)))
+
 ;;;; A source's title
 
 (defun org-moor--record-at-point ()
-  "Return the source of the link at point, of the copy shown, or the heading's."
+  "Return the source of the link at point, of the replica shown, or the heading's."
   (or (and (not (derived-mode-p 'org-mode)) (org-moor-shown-file)
-           (org-moor-copy-record (org-moor-shown-file)))
+           (org-moor-replica-record (org-moor-shown-file)))
       (and (derived-mode-p 'org-mode) (org-moor--record-here))
       (user-error "org-moor: no source here")))
 
@@ -298,10 +308,10 @@ archive -- whose origin is that folder instead."
                                      org-moor-move-directories))
              #'file-newer-than-file-p)))
 
-;;;###autoload (autoload 'org-moor-set-copy "org-moor" nil t)
-(defun org-moor-set-copy (record file)
-  "Give the source RECORD the file FILE as its copy.
-For a source whose copy could not be kept -- a file behind a sign-in,
+;;;###autoload (autoload 'org-moor-set-replica "org-moor" nil t)
+(defun org-moor-set-replica (record file)
+  "Give the source RECORD the file FILE as its replica.
+For a source whose replica could not be kept -- a file behind a sign-in,
 downloaded by hand after -- or is to be replaced.  FILE is moved when it
 is in `org-moor-move-directories', else copied, as taking it would.
 Interactively in Dired, the file at point, and the source is read by
@@ -310,37 +320,37 @@ it, and the file is read, the newest of `org-moor-move-directories'
 offered."
   (interactive
    (if-let* ((file (org-moor--file-at-point)))
-       (list (org-moor-read-source "Copy of: ") file)
+       (list (org-moor-read-source "Replica of: ") file)
      (let ((record (org-moor--record-at-point))
            (newest (org-moor--newest-piled)))
        (list record
-             (read-file-name (format "Copy of %s: " (plist-get record :title))
+             (read-file-name (format "Replica of %s: " (plist-get record :title))
                              (and newest (file-name-directory newest))
                              newest t
                              (and newest (file-name-nondirectory newest)))))))
   (let* ((file (expand-file-name file))
          (name (file-name-nondirectory file))
-         (old (plist-get record :copy))
-         (copy (expand-file-name name (plist-get record :dir))))
+         (old (plist-get record :replica))
+         (replica (expand-file-name name (plist-get record :dir))))
     (unless (file-regular-p file)
       (user-error "org-moor: not a file: %s" file))
-    (when (and old (not (y-or-n-p (format "Replace the copy %s? "
+    (when (and old (not (y-or-n-p (format "Replace the replica %s? "
                                           (file-name-nondirectory old)))))
-      (user-error "org-moor: copy kept"))
+      (user-error "org-moor: replica kept"))
     (when old
-      ;; What the old copy was made readable as is not this one.
+      ;; What the old replica was made readable as is not this one.
       (let ((md (concat old ".md")))
         (when (file-exists-p md) (delete-file md)))
-      (unless (equal (file-truename old) (file-truename copy))
+      (unless (equal (file-truename old) (file-truename replica))
         (delete-file old)))
     (if (org-moor-move-p file)
-        (rename-file file copy t)
-      (copy-file file copy t t))
+        (rename-file file replica t)
+      (copy-file file replica t t))
     (org-moor-record-set record :file name)
-    (message "org-moor: %s is the copy of %s" name (plist-get record :title))))
+    (message "org-moor: %s is the replica of %s" name (plist-get record :title))))
 
 (defun org-moor--records-to-keep ()
-  "Return the sources `org-moor-keep-copy' is about, from where point is.
+  "Return the sources `org-moor-keep-replica' is about, from where point is.
 Those linked in the region; else the source of the link at point; else
 those the heading at point, or a heading under it, links to."
   (unless (derived-mode-p 'org-mode)
@@ -358,15 +368,15 @@ those the heading at point, or a heading under it, links to."
     (or (delq nil (mapcar #'org-moor-find-record ids))
         (user-error "org-moor: no source here"))))
 
-;;;###autoload (autoload 'org-moor-keep-copy "org-moor" nil t)
-(defun org-moor-keep-copy (records)
-  "Keep a copy of each source of RECORDS that has none, from its origin.
+;;;###autoload (autoload 'org-moor-keep-replica "org-moor" nil t)
+(defun org-moor-keep-replica (records)
+  "Keep a replica of each source of RECORDS that has none, from its origin.
 For a source that has only its origin -- taken by an agent, which could
-not fetch it as you, signed in, or whose copy was let go.  A URL is
+not fetch it as you, signed in, or whose replica was let go.  A URL is
 fetched as `org-moor-take-url' fetches it, in the background; a path
 still there is moved when it is in `org-moor-move-directories', else
-copied, as taking it would.  A source whose copy is there is left as it
-is; `org-moor-set-copy' replaces a copy.
+copied, as taking it would.  A source whose replica is there is left as it
+is; `org-moor-set-replica' replaces a replica.
 Interactively, the sources linked in the region, else the source of the
 link at point, else those the heading links to."
   (interactive (list (org-moor--records-to-keep)))
@@ -379,17 +389,17 @@ link at point, else those the heading links to."
                                               (org-moor-file-url-path origin)
                                             origin)))))
         (cond
-         ((plist-get record :copy) (cl-incf had))
+         ((plist-get record :replica) (cl-incf had))
          ((not origin)
-          (message "org-moor: %s has no origin to keep a copy from"
+          (message "org-moor: %s has no origin to keep a replica from"
                    (plist-get record :title)))
-         ((not path) (org-moor-fetch-copy record))
+         ((not path) (org-moor-fetch-replica record))
          ((file-regular-p path)
-          (let ((copy (expand-file-name (file-name-nondirectory path)
+          (let ((replica (expand-file-name (file-name-nondirectory path)
                                         (plist-get record :dir))))
             (if (org-moor-move-p path)
-                (rename-file path copy t)
-              (copy-file path copy t t))
+                (rename-file path replica t)
+              (copy-file path replica t t))
             (org-moor-record-set record :file (file-name-nondirectory path))
             (message "Kept %s" (plist-get record :title))))
          (t (message "%s" (propertize
@@ -399,12 +409,12 @@ link at point, else those the heading links to."
     (when (use-region-p) (deactivate-mark))
     (when (= had (length records))
       (message "org-moor: %s already kept"
-               (if (cdr records) (format "all %d sources are" had) "its copy is")))))
+               (if (cdr records) (format "all %d sources are" had) "its replica is")))))
 
 ;;;###autoload (autoload 'org-moor-set-title "org-moor" nil t)
 (defun org-moor-set-title (record title)
   "Give the source RECORD the title TITLE, here and in its record.
-Interactively, the source of the link at point, of the copy shown, or
+Interactively, the source of the link at point, of the replica shown, or
 one the heading links to.  A link to it in this buffer whose name begins
 with the old title is named with the new one, its place kept; links in
 other files keep their names, which are only names."
@@ -457,7 +467,7 @@ Only `i' and `q' are bound, so that the keys you move with stay yours.")
   "Whether the buffer was read-only before `org-moor-noter-mode'.")
 
 (define-minor-mode org-moor-noter-mode
-  "Read a copy without changing it; `i' notes the place at point, `q' stops.
+  "Read a replica without changing it; `i' notes the place at point, `q' stops.
 A text is read-only, and its line marked, while the mode is on."
   :lighter " Moor"
   (unless (derived-mode-p 'pdf-view-mode 'doc-view-mode 'eww-mode)
@@ -494,7 +504,7 @@ A heading that was out before reading began is left out, as it was."
 (defun org-moor-noter ()
   "Read a source of the heading at point beside the heading, to note it.
 The source of the link at point, or one the heading, or a heading under
-it, links to.  The copy, as Emacs can read it, opens on the left in
+it, links to.  The replica, as Emacs can read it, opens on the left in
 `org-moor-noter-mode'; on the right, the heading, taken out by org-dock
 to be written in.  `i' notes the place there, as `org-moor-insert-place';
 `q' writes the heading back and puts the windows back, as C-c C-c in it
@@ -502,11 +512,11 @@ does.  A PDF is shown by pdf-tools when it is there, else by DocView; a
 page, by EWW, where `i' notes what is selected as a text to find; Word,
 PowerPoint and the like, as what pandoc makes them, whose lines `i'
 notes -- see `org-moor-readable-converters'.
-Any other copy is opened as `org-moor-open-source' would."
+Any other replica is opened as `org-moor-open-source' would."
   (interactive)
   (let* ((record (org-moor--record-here))
-         (copy (plist-get record :copy)))
-    (if (not (and copy (org-moor-file-to-read copy)))
+         (replica (plist-get record :replica)))
+    (if (not (and replica (org-moor-file-to-read replica)))
         (org-moor-open-record record nil (org-moor--heading-marker))
       (let* ((windows (current-window-configuration))
              (in-copy (org-dock-origin-file))
@@ -519,12 +529,12 @@ Any other copy is opened as `org-moor-open-source' would."
                       :display nil :restore nil
                       :finish (lambda (&rest _) (org-moor-noter--end source))
                       :abort (lambda () (org-moor-noter--end source))))))
-        ;; The copy is shown only once its window is final: a PDF shown in
+        ;; The replica is shown only once its window is final: a PDF shown in
         ;; a window that is then split shows nothing in the new one.
         (delete-other-windows)
         (set-window-buffer (split-window-right) dock)
         (org-moor-open-to-read
-         (org-moor-file-to-read copy)
+         (org-moor-file-to-read replica)
          (lambda ()
            (setq source (current-buffer)
                  org-moor--read-for heading)

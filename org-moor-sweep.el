@@ -22,7 +22,7 @@
 ;;
 ;; Putting a file away and taking it are two acts, and both can be wanted.
 ;; A directory is where a file can be found without Org, and is renamed and
-;; reorganised as work goes on; so a source taken from there keeps a copy
+;; reorganised as work goes on; so a source taken from there keeps a replica
 ;; of its own in the sources, and Org never depends on where the file went.
 
 ;;; Code:
@@ -101,7 +101,7 @@ is taken under the first root."
 
 ;;;###autoload (autoload 'org-moor-put-away "org-moor" nil t)
 (defun org-moor-put-away (files dir &optional take)
-  "Move FILES into DIR.  With TAKE, take each from there, as a copy.
+  "Move FILES into DIR.  With TAKE, take each from there, as a replica.
 Interactively FILES are the marked files in Dired or the one at point, and
 DIR is read, see `org-moor-read-directory'.
 \\[universal-argument] takes them too.
@@ -127,7 +127,7 @@ Return the files' new paths."
 
 ;;;###autoload (autoload 'org-moor-put-away-and-take "org-moor" nil t)
 (defun org-moor-put-away-and-take (files dir)
-  "Move FILES into DIR, and take each from there, as a copy."
+  "Move FILES into DIR, and take each from there, as a replica."
   (interactive (org-moor--put-away-args))
   (org-moor-put-away files dir t))
 

@@ -68,7 +68,7 @@ copies are below it.  Every buffer visiting a file there is closed after."
           (should (equal (plist-get record :origin) "https://chat.example/m/1"))
           (should (equal (plist-get record :file) "Chat from Robin.txt"))
           (should (equal (with-temp-buffer
-                           (insert-file-contents (plist-get record :copy))
+                           (insert-file-contents (plist-get record :replica))
                            (buffer-string))
                          "* not a heading\nok\n")))))))
 
@@ -81,7 +81,7 @@ copies are below it.  Every buffer visiting a file there is closed after."
           (should (equal (plist-get record :file) "Board a b.png"))
           (should (equal (plist-get record :via) "clipboard"))
           (should-not (plist-get record :origin))
-          (should (plist-get record :copy))))
+          (should (plist-get record :replica))))
       (org-moor-test--clipboard "A1\tB1" t
         (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) ?t)))
           (should (equal (plist-get (org-moor-record
@@ -98,7 +98,7 @@ copies are below it.  Every buffer visiting a file there is closed after."
 
 (ert-deftest org-moor-test-take-file ()
   "Taking a file on a heading puts a link at the end of its own text, and
-the copy, with its record, in the file's sources."
+the replica, with its record, in the file's sources."
   (org-moor-test--with-notes "* Topic\ntext\n** Other\n"
     (let ((orig (expand-file-name "manual.pdf" dir))
           (org-moor-move-directories nil))
@@ -114,9 +114,9 @@ the copy, with its record, in the file's sources."
           (should (equal (plist-get record :origin) orig))
           (should (equal (plist-get record :file) "manual.pdf"))
           (should (string-match-p "\\`\\[2026\\|\\`\\[" (plist-get record :taken)))
-          (should (equal (plist-get record :copy)
+          (should (equal (plist-get record :replica)
                          (expand-file-name "manual.pdf" (org-moor-source-directory id))))
-          (should (file-in-directory-p (plist-get record :copy) org-moor-sources-directory))))
+          (should (file-in-directory-p (plist-get record :replica) org-moor-sources-directory))))
       (should (file-exists-p orig)))))
 
 (ert-deftest org-moor-test-take-file-in-text ()
@@ -182,7 +182,7 @@ visual -- the link goes after that character."
             (should (equal (plist-get record :via) "web"))
             (should (equal (plist-get record :file) "page.html"))
             (should (equal (with-temp-buffer
-                             (insert-file-contents (plist-get record :copy))
+                             (insert-file-contents (plist-get record :replica))
                              (buffer-string))
                            "whole"))
             (should (equal (directory-files (plist-get record :dir) nil "\\`[^.]")
@@ -255,7 +255,7 @@ visual -- the link goes after that character."
         (should (equal fetched "https://x.com/rules.pdf"))
         (should (equal (plist-get record :title) "rules.pdf"))
         (should (equal (plist-get record :file) "rules.pdf"))
-        (should (plist-get record :copy))))))
+        (should (plist-get record :replica))))))
 
 (ert-deftest org-moor-test-file-is-told-by-what-it-sends ()
   (org-moor-test--with-notes "* Topic\n"
@@ -294,7 +294,7 @@ visual -- the link goes after that character."
              (record (org-moor-test--kept "https://x.com/article")))
         (should (equal (plist-get record :file) "page.html"))
         (with-temp-buffer
-          (insert-file-contents (plist-get record :copy))
+          (insert-file-contents (plist-get record :replica))
           (should (equal (buffer-string) "<html>raw</html>")))))))
 
 (ert-deftest org-moor-test-url-unwrap ()
@@ -443,7 +443,7 @@ into the sources of the heading's own file."
           (should (eolp)))))))
 
 (ert-deftest org-moor-test-a-browser-downloads-what-it-is-told-to ()
-  "The browser opens the download, and the copy is looked for where it
+  "The browser opens the download, and the replica is looked for where it
 downloads to; with nothing told, Emacs fetches."
   (let ((opened nil) (looked nil) (fetched nil))
     (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push u opened)))
@@ -470,7 +470,7 @@ downloads to; with nothing told, Emacs fetches."
         (should (equal (length opened) 1))))))
 
 (ert-deftest org-moor-test-a-failed-lookup-still-ends ()
-  "When taking the copy fails after the lookup, DONE is still called."
+  "When taking the replica fails after the lookup, DONE is still called."
   (let ((result 'unset) (org-moor--browser-queue nil) (org-moor--browser-busy nil))
     (cl-letf (((symbol-function 'browse-url) (lambda (&rest _) (error "No browser"))))
       (let ((org-moor-browser-download-function
@@ -541,7 +541,7 @@ downloads to; with nothing told, Emacs fetches."
          (file (expand-file-name "a.txt" dir))
          (fetched nil))
     (with-temp-file file (insert "a"))
-    (cl-letf (((symbol-function 'org-moor-fetch-copy)
+    (cl-letf (((symbol-function 'org-moor-fetch-replica)
                (lambda (record &rest _) (setq fetched (plist-get record :origin)))))
       (should (string-match-p "\\`\\[\\[moor:[^]]+\\]\\[Page\\]\\]\\'"
                               (org-moor-agent-take dir "https://x.com/p" "Page")))

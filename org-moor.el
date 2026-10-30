@@ -30,20 +30,21 @@
 ;; seconds.
 ;;
 ;; `org-moor-jump'       go back to any heading something was taken to
-;; `org-moor-take-file'  take a file: its copy in the sources, a link to it here
+;; `org-moor-take-file'  take a file: its replica in the sources, a link to it here
 ;; `org-moor-take-url'   take a page or a file on the web, kept as what it sends
 ;; `org-moor-take-clipboard' take the clipboard's text or image, as a source
 ;; `org-moor-sweep'      what piled up in downloads and the like, newest first
 ;; `org-moor-put-away'   move a file into a directory of yours, and take it too
 ;; `org-moor-noter'      read a source beside its heading, taken out to note in
 ;; `org-moor-insert-place' note the place being read, in its heading
-;; `org-moor-open-source' the copy of a source the heading links to, as its link
+;; `org-moor-open-source' the replica of a source the heading links to, as its link
 ;; `org-moor-open-origin' where a source the heading links to came from
+;; `org-moor-clip-origin' that origin, onto the clipboard
 ;; `org-moor-set-title'  give a source another title
 ;; `org-moor-set-origin' give the sources linked in the region an origin
-;; `org-moor-set-copy'   give a source a file downloaded by hand as its copy
-;; `org-moor-keep-copy'  keep a copy, from its origin, of sources that have none
-;; `org-moor-prune'      choose which copies to let go, largest first
+;; `org-moor-set-replica' give a source a file downloaded by hand as its replica
+;; `org-moor-keep-replica' keep a replica, from its origin, of sources that have none
+;; `org-moor-prune'      choose which replicas to let go, largest first
 ;;
 ;; See README.org.
 

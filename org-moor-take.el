@@ -254,7 +254,7 @@ let go of, whatever happens."
 
 ;; What is copied -- a chat's message, a mail's paragraph, a screenshot --
 ;; is taken as any file is: a source of its own, its text or its image the
-;; copy, so that it is kept, and read, where every other source is.
+;; replica, so that it is kept, and read, where every other source is.
 
 (defun org-moor--clipboard-text ()
   "Return the text on the system's clipboard, or nil."
@@ -316,7 +316,7 @@ AppleScript, and Windows's through PowerShell, when Emacs had nothing."
 
 (defun org-moor-take-written-to (write extension sources title &optional via origin)
   "Take what WRITE writes into SOURCES as a source titled TITLE; return its record.
-WRITE is called with the copy's file, named after TITLE with EXTENSION.
+WRITE is called with the replica's file, named after TITLE with EXTENSION.
 VIA says how it arrived, `clipboard' when nil; ORIGIN, where it came
 from, is left out when nil.  Nothing is written in Org."
   (let* ((record (org-moor-new-source title origin (or via 'clipboard) sources))
@@ -329,7 +329,7 @@ from, is left out when nil.  Nothing is written in Org."
     (org-moor-record-set record :file name)))
 
 (defun org-moor-take-text-to (text sources title &optional via origin)
-  "Take TEXT into SOURCES as a source titled TITLE, a text file its copy.
+  "Take TEXT into SOURCES as a source titled TITLE, a text file its replica.
 VIA and ORIGIN as `org-moor-take-written-to' takes them."
   (org-moor-take-written-to
    (lambda (file) (org-moor--write-text file (concat (string-trim-right text) "\n")))
@@ -405,7 +405,7 @@ one than its name -- a document's own title, sent from outside Emacs.")
 
 (defun org-moor-take-file-to (file sources &optional title via move origin)
   "Take FILE into SOURCES as a source titled TITLE, and return its record.
-The copy is FILE moved there with MOVE, else copied.  TITLE is the file's
+The replica is FILE moved there with MOVE, else copied.  TITLE is the file's
 name without its extension when nil; VIA says how it arrived, `file' when
 nil; ORIGIN is where it came from, FILE itself when nil.  Nothing is
 written in Org: a link to it is the caller's, with `org-moor-link'."
@@ -413,11 +413,11 @@ written in Org: a link to it is the caller's, with `org-moor-link'."
          (name (file-name-nondirectory file))
          (record (org-moor-new-source (or title (file-name-sans-extension name))
                                       (or origin file) (or via 'file) sources))
-         (copy (expand-file-name name (plist-get record :dir))))
+         (replica (expand-file-name name (plist-get record :dir))))
     (condition-case err
         (if move
-            (rename-file file copy)
-          (copy-file file copy nil t))
+            (rename-file file replica)
+          (copy-file file replica nil t))
       (error
        (delete-directory (plist-get record :dir) t)
        (signal (car err) (cdr err))))
@@ -425,14 +425,14 @@ written in Org: a link to it is the caller's, with `org-moor-link'."
 
 ;;;###autoload (autoload 'org-moor-take-file "org-moor" nil t)
 (defun org-moor-take-file (file &optional pick via flip origin)
-  "Take FILE as a source: its copy in the sources, a link to it here.
+  "Take FILE as a source: its replica in the sources, a link to it here.
 At point when in Org; with PICK, or from outside Org, at a chosen
 heading -- see `org-moor-insert-link-line'.  The source goes in the
 sources directory of the file the link goes in.  VIA says how it
 arrived, `file' when nil.  The original is moved when it is in
 `org-moor-move-directories' and copied otherwise; FLIP turns that round
 for this once.  ORIGIN is where it came from, when that is not FILE
-itself -- a copy saved from a document opened from the web.
+itself -- a replica saved from a document opened from the web.
 Return a marker at the link.
 
 Interactively FILE is the one at point in Dired, else read.  One
@@ -517,7 +517,7 @@ nobody, and gets a sign-in page."
                                       (file-exists-p file))))))))
 
 (defconst org-moor-snapshot-file "page.html"
-  "Name of a web page's copy in its directory.")
+  "Name of a web page's replica in its directory.")
 
 (defcustom org-moor-mime-extensions
   '(("text/html" . "html") ("application/xhtml+xml" . "html")
@@ -612,8 +612,8 @@ Anything else is itself."
             ((string-match "filename=\\([^;]+\\)" header)
              (string-trim (match-string 1 header)))))))
 
-(defun org-moor-copy-name (url type &optional disposition)
-  "Return the name a copy of URL is given, sent as TYPE with DISPOSITION.
+(defun org-moor-replica-name (url type &optional disposition)
+  "Return the name a replica of URL is given, sent as TYPE with DISPOSITION.
 A page is `org-moor-snapshot-file'.  A file is named as its
 Content-Disposition names it, else as its URL is spelled, else
 \"file\"; given the extension of TYPE when its own is not one known."
@@ -650,10 +650,10 @@ which tells neither."
     (funcall done (ignore-errors (url-copy-file url file t) t) nil nil)))
 
 (defun org-moor-fetch (url dir done)
-  "Keep a copy of URL in DIR, then call DONE with its name, or nil.
+  "Keep a replica of URL in DIR, then call DONE with its name, or nil.
 What it is, is what it sends: a page is kept by
 `org-moor-snapshot-function', or else as its HTML; a file under the name
-`org-moor-copy-name' gives it.  A page sent for a URL spelled as a file
+`org-moor-replica-name' gives it.  A page sent for a URL spelled as a file
 -- a sign-in page -- is not the file, and nothing is kept."
   (let ((fetched (make-temp-file (expand-file-name ".fetch" dir))))
     (org-moor--fetch
@@ -664,7 +664,7 @@ What it is, is what it sends: a page is kept by
                            (if (or (not sent) (equal sent "application/octet-stream"))
                                (or (org-moor-sniff-type fetched) sent)
                              (downcase sent)))))
-              (name (and type (org-moor-copy-name url type disposition)))
+              (name (and type (org-moor-replica-name url type disposition)))
               (page (equal name org-moor-snapshot-file))
               (spelled (org-moor-url-file-name url)))
          (cond
@@ -691,7 +691,7 @@ What it is, is what it sends: a page is kept by
   "Names a browser gives a download until it is whole.")
 
 (defcustom org-moor-arriving-timeout 120
-  "Seconds to wait for a copy a browser is downloading."
+  "Seconds to wait for a replica a browser is downloading."
   :type 'integer
   :group 'org-moor)
 
@@ -711,8 +711,8 @@ What it is, is what it sends: a page is kept by
           (new (car (sort new #'file-newer-than-file-p))))))
 
 (defun org-moor-arriving (dir since)
-  "Return a way to keep a copy that a browser is downloading into DIR.
-The copy is the file come into DIR since SINCE, a time, once it is whole;
+  "Return a way to keep a replica that a browser is downloading into DIR.
+The replica is the file come into DIR since SINCE, a time, once it is whole;
 it is moved to the source.  For `org-moor-take-url-to', as KEEP."
   (let ((since (time-subtract since 2)))
     (lambda (_url into done)
@@ -787,9 +787,9 @@ as errors is not read.  See `org-moor-browser-download-function'."
 
 (defcustom org-moor-browser-download-function
   (and (eq system-type 'windows-nt) #'org-moor-front-download)
-  "Function telling how a browser downloads a URL's copy, or nil.
+  "Function telling how a browser downloads a URL's replica, or nil.
 Called with a URL and a function it calls, once it knows, with
-\(DOWNLOAD . DIR), the URL a browser signed in downloads the copy from
+\(DOWNLOAD . DIR), the URL a browser signed in downloads the replica from
 and the directory it downloads into, or with nil when the URL is fetched
 as `org-moor-fetch' fetches it.  DOWNLOAD is opened by `browse-url'.  On
 Windows, the script for the document in front is asked, by the
@@ -804,8 +804,8 @@ configuration it keeps sites in."
   "Non-nil while a download by the browser is awaited.")
 
 (defun org-moor--browser-next ()
-  "Have the browser download the next copy queued, when none is awaited.
-One at a time, since a copy is told from another only by when it came."
+  "Have the browser download the next replica queued, when none is awaited.
+One at a time, since a replica is told from another only by when it came."
   (unless org-moor--browser-busy
     (when-let* ((next (pop org-moor--browser-queue)))
       (pcase-let ((`(,download ,dir ,url ,into ,done) next))
@@ -822,9 +822,9 @@ One at a time, since a copy is told from another only by when it came."
                    (funcall finish nil))))))))
 
 (defun org-moor-browser-or-fetch (url dir done)
-  "Keep a copy of URL in DIR, then call DONE with its name, or nil.
+  "Keep a replica of URL in DIR, then call DONE with its name, or nil.
 By a browser when `org-moor-browser-download-function' tells one how,
-the copy taken as `org-moor-arriving' takes one, after any it is already
+the replica taken as `org-moor-arriving' takes one, after any it is already
 downloading; else by `org-moor-fetch'."
   (if (not org-moor-browser-download-function)
       (org-moor-fetch url dir done)
@@ -842,10 +842,10 @@ downloading; else by `org-moor-fetch'."
   (let ((text (ignore-errors (string-trim (org-moor--clipboard)))))
     (and text (string-match-p "\\`https?://[^ \t\n]+\\'" text) text)))
 
-(defun org-moor-fetch-copy (record &optional keep then)
-  "Keep a copy of the source RECORD from its origin, a URL, in the background.
+(defun org-moor-fetch-replica (record &optional keep then)
+  "Keep a replica of the source RECORD from its origin, a URL, in the background.
 By KEEP: called with the URL, the source's directory and a function to
-call with the copy's name there, or nil; when nil,
+call with the replica's name there, or nil; when nil,
 `org-moor-browser-or-fetch'.
 THEN, when given, is called once it is kept, or is not."
   (let ((title (plist-get record :title))
@@ -854,7 +854,7 @@ THEN, when given, is called once it is kept, or is not."
              (lambda (file)
                (if (not file)
                    (message "%s" (propertize
-                                  (format "org-moor: no copy of %s; kept only its URL -- download it and give it with M-x org-moor-set-copy"
+                                  (format "org-moor: no replica of %s; kept only its URL -- download it and give it with M-x org-moor-set-replica"
                                           title)
                                   'face 'warning))
                  (org-moor-record-set record :file file)
@@ -863,23 +863,23 @@ THEN, when given, is called once it is kept, or is not."
 
 (defun org-moor-take-url-to (url sources &optional title wait keep)
   "Take URL into SOURCES as a source titled TITLE, and return its record.
-Its copy is kept by KEEP in the background, or with WAIT before this
-returns; see `org-moor-fetch-copy'.  TITLE is the file's name, for a URL
+Its replica is kept by KEEP in the background, or with WAIT before this
+returns; see `org-moor-fetch-replica'.  TITLE is the file's name, for a URL
 spelled as one, else the URL, when nil.  Nothing is written in Org."
   (let* ((url (org-moor-url-unwrap url))
          (name (org-moor-url-file-name url))
          (title (or title (and name (file-name-sans-extension name)) url))
          (record (org-moor-new-source title url 'web sources))
          (done nil))
-    (org-moor-fetch-copy record keep (lambda () (setq done t)))
+    (org-moor-fetch-replica record keep (lambda () (setq done t)))
     (when wait
       (while (not done) (accept-process-output nil 0.1)))
     (or (org-moor-record (plist-get record :id) sources) record)))
 
 ;;;###autoload (autoload 'org-moor-take-url "org-moor" nil t)
 (defun org-moor-take-url (url &optional title pick keep)
-  "Take URL as a source, titled TITLE, and keep a copy of it.
-The copy is what URL sends -- see `org-moor-fetch' -- or what KEEP
+  "Take URL as a source, titled TITLE, and keep a replica of it.
+The replica is what URL sends -- see `org-moor-fetch' -- or what KEEP
 keeps, as `org-moor-take-url-to' says.  At point when in Org; with PICK,
 at a chosen heading, as `org-moor-take-file' takes a file.
 Interactively the URL on the clipboard is offered.  Return a marker at
@@ -899,7 +899,7 @@ the link."
 (defun org-moor--take-what (what sources title &optional wait)
   "Take WHAT, a file or a URL, into SOURCES as a source titled TITLE.
 Return its record.  A file is copied, never moved, and titled by its
-name unless TITLE is given; a URL's copy is kept with WAIT before this
+name unless TITLE is given; a URL's replica is kept with WAIT before this
 returns, else after."
   (let ((sources (file-name-as-directory (expand-file-name sources))))
     (if (string-match-p "\\`https?://" what)
@@ -940,7 +940,7 @@ the source named by its title, [[moor:ID][TITLE]].
 
 With --server, the Emacs whose server FILE is takes it, by
 `org-moor-agent-take', so that a URL is fetched as the user would fetch
-it, by the browser among the ways, the link printed at once and the copy
+it, by the browser among the ways, the link printed at once and the replica
 kept after.  Without it, or when that Emacs cannot be reached, a URL is
 fetched here, as nobody, before the link is printed."
   (let* ((server (and command-line-args-left
@@ -967,7 +967,7 @@ fetched here, as nobody, before the link is printed."
 (defun org-moor-agent-take (sources what &optional title)
   "Take WHAT, a file or a URL, into SOURCES, and return a link to it.
 For `org-moor-batch-take' --server, in the Emacs the user works in: a
-URL's copy is kept as a URL taken here is, after the link is returned,
+URL's replica is kept as a URL taken here is, after the link is returned,
 so that the agent is not kept waiting.  The link is [[moor:ID][TITLE]]."
   (org-moor-link (org-moor--take-what what sources title)))
 
@@ -983,7 +983,7 @@ so that the agent is not kept waiting.  The link is [[moor:ID][TITLE]]."
 
 The first takes a page or a file on the web.  The second takes a file on
 the web that a browser, signed in where it is, is downloading into DIR:
-its copy is the file come there since SECONDS, a Unix time, moved to the
+its replica is the file come there since SECONDS, a Unix time, moved to the
 source once whole -- see `org-moor-arriving'.  The third takes a file on
 disk, as does a file: URL, which a browser shows for a file it opened;
 ORIGIN, when given, is where that file was opened from.  Either arrives
