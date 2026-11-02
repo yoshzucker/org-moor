@@ -55,11 +55,12 @@ org-moor needs [[https://github.com/yoshzucker/org-dock][org-dock]], which takes
 
 Programs it calls when they are there, and does without when not:
 
-| Program     | For                                                   |
-|-------------+-------------------------------------------------------|
-| ~monolith~  | keeping a web page as one HTML file, with its images  |
-| ~curl~      | downloading a file, or a page's HTML without monolith |
-| ~pandoc~    | making HTML, Word, PowerPoint, EPUB readable as text  |
+| Program       | For                                                   |
+|---------------+-------------------------------------------------------|
+| ~monolith~    | keeping a web page as one HTML file, with its images  |
+| ~curl~        | downloading a file, or a page's HTML without monolith |
+| ~single-file~ | saving a page only a browser shows whole, unseen      |
+| ~pandoc~      | making HTML, Word, PowerPoint, EPUB readable as text  |
 
 For a browser, ~script/org-moor-bookmarklet.txt~ is a bookmarklet that
 sends the page through ~org-protocol://moor~.  org-protocol has to be
@@ -96,14 +97,17 @@ given them.  Cookies run out, so the file is to be written again now and
 then, and kept where only you can read it, since it is your sign-in.
 On Windows, the script asks the browser itself to keep what some sites
 keep behind a sign-in -- a file in a document library, a wiki page as
-the PDF its site exports, a page that only an extension such as
-SingleFile saves whole -- by sending it to a URL that downloads it, or
-typing the extension's shortcut; the replica is taken from the Downloads
-folder once it is there.  Which sites those are is
+the PDF its site exports -- by sending it to a URL that downloads it;
+the replica is taken from the Downloads folder once it is there.  A page
+only a browser shows whole -- one its scripts draw -- is saved by
+SingleFile's command line, ~single-file~, in a browser of its own that
+shows no window, so that nothing comes in front of what you are doing.
+Which sites those are is
 ~~/.config/org-moor/front.json~: under ~sites~, an entry -- one ~{ }~ --
-for each URL pattern.  A URL gets the first entry whose ~match~ fits it,
-and nothing from any other, so what one URL needs -- a ~download~, say,
-and a ~title~ -- is written in the one entry.  An entry's ~title~ is what
+for each URL pattern, with a ~download~, or ~"singlefile": true~.  A URL
+gets the first entry whose ~match~ fits it, and nothing from any other,
+so what one URL needs -- a ~download~, say, and a ~title~ -- is written
+in the one entry.  An entry's ~title~ is what
 the site adds to the window's title, taken off.
 ~script/org-moor-front.json~ is read while there is none, and is its
 template: ~org-moor-front.ps1 -WriteConfig~ writes it there to be
@@ -112,18 +116,30 @@ changed.  A URL taken in Emacs -- by ~org-moor-take-url~,
 through ~org-moor-browser-download-function~, in the background: one an
 entry gives a download for is opened by ~browse-url~, and its replica taken
 from the Downloads folder, one download at a time, since a replica there is
-told from another only by when it came.  One an entry gives keys for is
-opened by ~browse-url~ too, and the script types the keys once the browser
-is in front showing a page of the entry and its title has stayed the same
-for a moment, as it does once the page has loaded; a sign-in page in its
-place is left alone.
+told from another only by when it came.  One an entry has single-file
+save is saved by it, into the source's directory.
+
+single-file drives Chrome or Chromium -- ~org-moor-singlefile-browser~,
+else the one it finds -- signed in by the profile
+~org-moor-singlefile-profile~, of which each page is saved with a copy.
+~org-moor-sign-in~ opens that browser, with a window, at a URL, to sign in
+and quit; the profile keeps the sign-in.  When the page saved turns out
+to be a sign-in page -- on Windows, one the entry it was taken by does
+not match, see ~org-moor-signed-out-function~ -- it is not kept: the
+source has its origin and the host to sign in to, the echo area says so,
+and so does the link's summary.  After ~org-moor-sign-in~, the sources
+waiting for that host are offered to ~org-moor-keep-replica~.
 
 An agent working on a heading taken out by org-dock is told a command
-that takes a source in.  While the server of the Emacs you work in is
-running, the command has that Emacs take it, so that a URL is fetched as
-you would fetch it, the link coming back at once and the replica after;
-otherwise, or when it cannot be reached, a batch Emacs takes it, and
-fetches as nobody.
+that takes a source in, which prints the link and, on the next line, the
+replica to read, or why there is none.  While the server of the Emacs you
+work in is running, the command has that Emacs take it, so that a URL is
+fetched as you would fetch it, and waits for the replica, asking every
+second, while that Emacs goes on; nothing is opened in front of you for
+it: a page single-file saves is saved unseen, and a file only a download
+in the browser keeps has its origin alone, for ~org-moor-keep-replica~
+when it suits you.  Otherwise, or when that Emacs cannot be reached, a
+batch Emacs takes it, and fetches as nobody.
 
 Following a link opens the source's replica as a ~file:~ link to it would
 be opened: as ~org-file-apps~ says, in Emacs with ~C-u~, and in the

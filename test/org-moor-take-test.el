@@ -538,40 +538,6 @@ downloads to; with nothing told, Emacs fetches."
       (org-moor-front-download "https://x/view" (lambda (how) (setq got how)))
       (should (equal got '("https://x/get" "C:\\dl"))))))
 
-(ert-deftest org-moor-test-front-download-has-keys-typed ()
-  "For an entry that gives keys, the URL itself is opened, and the script
-is then started to type them."
-  (let ((got 'unset) (commands nil)
-        (org-moor-script-directory (make-temp-file "moor" t)))
-    (with-temp-file (expand-file-name "org-moor-front.ps1" org-moor-script-directory))
-    (cl-letf (((symbol-function 'make-process)
-               (lambda (&rest args)
-                 (push (plist-get args :command) commands)
-                 (when (plist-get args :sentinel)
-                   (let ((proc (make-pipe-process :name "org-moor-test" :noquery t)))
-                     (delete-process proc)
-                     (with-current-buffer (plist-get args :buffer)
-                       (insert "https://x/page\r\nC:\\dl\r\nkeys\r\n"))
-                     (funcall (plist-get args :sentinel) proc "finished\n"))))))
-      (org-moor-front-download "https://x/page" (lambda (how) (setq got how)))
-      (should (equal (seq-take got 2) '("https://x/page" "C:\\dl")))
-      (should (equal (length commands) 1))
-      (funcall (nth 2 got))
-      (should (equal (last (car commands) 2) '("-Press" "https://x/page"))))
-    (delete-directory org-moor-script-directory t)))
-
-(ert-deftest org-moor-test-browser-then-after-opening ()
-  "What is to be done once the download is opened is done after it."
-  (let ((events nil) (org-moor--browser-queue nil) (org-moor--browser-busy nil))
-    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push (list 'open u) events)))
-              ((symbol-function 'org-moor-arriving)
-               (lambda (_dir _since)
-                 (lambda (_url _into done) (push 'wait events) (funcall done "p.html")))))
-      (let ((org-moor-browser-download-function
-             (lambda (url done) (funcall done (list url "/dl" (lambda () (push 'keys events)))))))
-        (org-moor-browser-or-fetch "https://x/page" "/s" #'ignore)
-        (should (equal (reverse events) '((open "https://x/page") keys wait)))))))
-
 (ert-deftest org-moor-test-protocol-does-not-look-up-again ()
   "A URL from outside has been looked up there: Emacs fetches it."
   (let ((asked nil) (keep nil))
@@ -597,6 +563,192 @@ is then started to type them."
     (should-error (org-moor-agent-take dir (expand-file-name "none" dir)))
     (delete-directory dir t)))
 
+(ert-deftest org-moor-test-agent-take-opens-no-browser ()
+  "What only a download in the browser keeps has its origin alone when an
+agent takes it; a page single-file saves is saved."
+  (let ((opened nil) (saved nil) (got nil)
+        (org-moor--browser-queue nil) (org-moor--browser-busy nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push u opened)))
+              ((symbol-function 'org-moor-singlefile-keep)
+               (lambda (url _dir done) (push url saved) (funcall done "page.html"))))
+      (let ((org-moor-browser-download-function
+             (lambda (url done)
+               (funcall done (if (string-match-p "files" url)
+                                 (list "https://files.example.com/get" "/dl")
+                               'singlefile)))))
+        (org-moor--unseen-keep "https://files.example.com/view" "/s" (lambda (n) (push n got)))
+        (org-moor--unseen-keep "https://wiki.example.com/p" "/s" (lambda (n) (push n got)))
+        (should-not opened)
+        (should (equal saved '("https://wiki.example.com/p")))
+        (should (equal got '("page.html" later)))))))
+
+(ert-deftest org-moor-test-singlefile-is-told-by-the-script ()
+  "An entry that has single-file save it is answered `singlefile', and the
+page is saved by it, with no browser opened."
+  (let ((got 'unset) (saved nil) (opened nil)
+        (org-moor-script-directory (make-temp-file "moor" t)))
+    (with-temp-file (expand-file-name "org-moor-front.ps1" org-moor-script-directory))
+    (cl-letf (((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (let ((proc (make-pipe-process :name "org-moor-test" :noquery t)))
+                   (delete-process proc)
+                   (with-current-buffer (plist-get args :buffer)
+                     (insert "https://wiki.example.com/p\r\nsinglefile\r\n"))
+                   (funcall (plist-get args :sentinel) proc "finished\n")))))
+      (org-moor-front-download "https://wiki.example.com/p" (lambda (how) (setq got how))))
+    (should (eq got 'singlefile))
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push u opened)))
+              ((symbol-function 'org-moor-singlefile-keep)
+               (lambda (url _dir done) (push url saved) (funcall done "page.html"))))
+      (let ((org-moor-browser-download-function (lambda (_url done) (funcall done 'singlefile))))
+        (org-moor-browser-or-fetch "https://wiki.example.com/p" "/s" #'ignore)))
+    (should (equal saved '("https://wiki.example.com/p")))
+    (should-not opened)
+    (delete-directory org-moor-script-directory t)))
+
+(defun org-moor-test--fake-singlefile (dir location)
+  "Write a single-file into DIR that saves a page found at LOCATION.
+It writes its arguments, one a line, to DIR/args.  LOCATION nil fails."
+  (let ((program (expand-file-name "single-file" dir)))
+    (with-temp-file program
+      (insert "#!/bin/sh\n"
+              "for a in \"$@\"; do echo \"$a\"; done > " (shell-quote-argument (expand-file-name "args" dir)) "\n"
+              (if location
+                  (concat "for out; do :; done\n"
+                          "printf '<html><head><meta name=org-moor-location content=\"%s\"></head></html>' "
+                          (shell-quote-argument location) " > \"$out\"\n")
+                "exit 1\n")))
+    (set-file-modes program #o755)
+    program))
+
+(defun org-moor-test--keep-by-singlefile (url dir)
+  "Keep URL into DIR by `org-moor-singlefile-keep'; return what DONE got."
+  (let ((got 'unset))
+    (org-moor-singlefile-keep url dir (lambda (n) (setq got n)))
+    (with-timeout (10 (error "single-file did not end"))
+      (while (eq got 'unset) (accept-process-output nil 0.05)))
+    got))
+
+(ert-deftest org-moor-test-singlefile-saves-the-page ()
+  "single-file is given the browser, the profile, the script and the page;
+a page that stays on its host is the replica, and one on another a sign-in."
+  (skip-unless (not (memq system-type '(windows-nt ms-dos))))
+  (let* ((dir (file-name-as-directory (make-temp-file "moor" t)))
+         (into (file-name-as-directory (expand-file-name "s" dir)))
+         (org-moor-singlefile-browser "/opt/chrome")
+         (org-moor-singlefile-profile (expand-file-name "profile" dir))
+         (org-moor-signed-out-function #'org-moor-signed-out-by-host))
+    (make-directory into)
+    (let ((org-moor-singlefile-program
+           (org-moor-test--fake-singlefile dir "https://wiki.example.com/p?a=1&amp;b=2")))
+      (should (equal (org-moor-test--keep-by-singlefile "https://wiki.example.com/p" into)
+                     "page.html"))
+      (should (file-exists-p (expand-file-name "page.html" into)))
+      (let ((args (with-temp-buffer
+                    (insert-file-contents (expand-file-name "args" dir))
+                    (split-string (buffer-string) "\n" t))))
+        (should (equal (seq-take args 6)
+                       (list "--browser-executable-path" "/opt/chrome"
+                             "--browser-profile" org-moor-singlefile-profile
+                             "--browser-script" org-moor--location-script)))
+        (should (equal (seq-subseq args 6 9)
+                       '("--filename-conflict-action" "overwrite"
+                         "https://wiki.example.com/p")))))
+    (delete-file (expand-file-name "page.html" into))
+    (let ((org-moor-singlefile-program
+           (org-moor-test--fake-singlefile dir "https://login.example.com/?r=wiki")))
+      (should (eq (org-moor-test--keep-by-singlefile "https://wiki.example.com/p" into)
+                  'signin)))
+    (let ((org-moor-singlefile-program (org-moor-test--fake-singlefile dir nil)))
+      (should-not (org-moor-test--keep-by-singlefile "https://wiki.example.com/p" into)))
+    (should-not (directory-files into nil "\\`[^.]"))
+    (should-not (directory-files into nil "\\`\\.page"))
+    (delete-directory dir t)))
+
+(ert-deftest org-moor-test-singlefile-location ()
+  "Where the page was is read back, quoted or not."
+  (let ((file (make-temp-file "moor" nil ".html")))
+    (with-temp-file file
+      (insert "<head><meta name=org-moor-location content=https://a.example/p></head>"))
+    (should (equal (org-moor-singlefile-location file) "https://a.example/p"))
+    (with-temp-file file (insert "<head></head>"))
+    (should-not (org-moor-singlefile-location file))
+    (should-not (org-moor-signed-out-p "https://a.example/p" nil))
+    (should-not (org-moor-signed-out-p "https://a.example/p" "https://a.example/login"))
+    (should (org-moor-signed-out-p "https://a.example/p" "https://login.example/"))
+    (delete-file file)))
+
+(ert-deftest org-moor-test-front-signed-out ()
+  "A page is one of the site while its entry still has single-file save it;
+the URL asked for itself is not asked about again."
+  (let ((asked nil) (got nil))
+    (cl-letf (((symbol-function 'org-moor-front-download)
+               (lambda (url done)
+                 (push url asked)
+                 (funcall done (and (string-match-p "/wiki/" url) 'singlefile)))))
+      (org-moor-front-signed-out "https://w.example/wiki/a" "https://w.example/wiki/a"
+                                 (lambda (out) (push out got)))
+      (should-not asked)
+      (org-moor-front-signed-out "https://w.example/wiki/a" "https://w.example/wiki/a/"
+                                 (lambda (out) (push out got)))
+      (org-moor-front-signed-out "https://w.example/wiki/a" "https://w.example/login?r=a"
+                                 (lambda (out) (push out got)))
+      (should (equal asked '("https://w.example/login?r=a" "https://w.example/wiki/a/")))
+      (should (equal got '(t nil nil))))))
+
+(ert-deftest org-moor-test-a-sign-in-page-waits-for-a-sign-in ()
+  "A source shown a sign-in page keeps its host, until its replica is kept."
+  (org-moor-test--with-notes ""
+    (let ((record (org-moor-new-source "Wiki" "https://wiki.example.com/p" 'web)))
+      (org-moor-fetch-replica record (lambda (_url _dir done) (funcall done 'signin)))
+      (should (equal (plist-get (org-moor-record (plist-get record :id)) :signin)
+                     "wiki.example.com"))
+      (should-not (gethash (plist-get record :id) org-moor--keeping))
+      (let ((record (org-moor-record (plist-get record :id))))
+        (org-moor-fetch-replica record
+                                (lambda (_url dir done)
+                                  (with-temp-file (expand-file-name "page.html" dir))
+                                  (funcall done "page.html")))
+        (let ((now (org-moor-record (plist-get record :id))))
+          (should (plist-get now :replica))
+          (should-not (plist-get now :signin)))))))
+
+(ert-deftest org-moor-test-protocol-has-singlefile-keep ()
+  "A page from outside that single-file saves is kept by it."
+  (let ((keep nil))
+    (cl-letf (((symbol-function 'select-frame-set-input-focus) #'ignore)
+              ((symbol-function 'org-moor-take-url)
+               (lambda (_url _title _pick k) (setq keep k))))
+      (org-moor-protocol '(:url "https://wiki.example.com/p" :keep "singlefile"))
+      (should (eq keep #'org-moor-singlefile-keep)))))
+
+(ert-deftest org-moor-test-sign-in ()
+  "The browser is opened in the profile at the URL; once it is quit, the
+sources waiting for that host are offered to be kept."
+  (org-moor-test--with-notes ""
+    (let* ((waiting (org-moor-new-source "Wiki" "https://wiki.example.com/p" 'web))
+           (other (org-moor-new-source "Other" "https://other.example.com/p" 'web))
+           (org-moor-singlefile-profile (expand-file-name "profile" dir))
+           (org-moor-singlefile-browser nil)
+           (command nil) (kept nil))
+      (org-moor-record-set waiting :signin "wiki.example.com")
+      (org-moor-record-set other :signin "other.example.com")
+      (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/bin/single-file"))
+                ((symbol-function 'make-process)
+                 (lambda (&rest args)
+                   (setq command (plist-get args :command))
+                   (let ((proc (make-pipe-process :name "org-moor-test" :noquery t)))
+                     (delete-process proc)
+                     (funcall (plist-get args :sentinel) proc "finished\n"))))
+                ((symbol-function 'process-exit-status) (lambda (_) 0))
+                ((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                ((symbol-function 'org-moor-keep-replica)
+                 (lambda (records) (setq kept (mapcar (lambda (r) (plist-get r :title)) records)))))
+        (org-moor-sign-in "https://wiki.example.com/p"))
+      (should (equal command (list "single-file" "--create-browser-profile"
+                                   org-moor-singlefile-profile "https://wiki.example.com/p")))
+      (should (equal kept '("Wiki"))))))
+
 (ert-deftest org-moor-test-batch-command-by-the-server ()
   "While the server runs, the command names it; the agent fills in the same."
   ;; As the sources are named on this system: c\:/tmp/s on Windows.
@@ -611,27 +763,70 @@ is then started to type them."
                               (org-moor-batch-command "/tmp/s/"))))))
 
 (ert-deftest org-moor-test-batch-take-by-the-server ()
-  "The server's Emacs takes it; when it cannot be reached, it is taken here."
+  "The server's Emacs takes it, and is asked until its replica is kept;
+when it cannot be reached, it is taken here."
   (let* ((dir (make-temp-file "moor" t))
          (file (expand-file-name "a.txt" dir))
-         (asked nil))
+         (asked nil)
+         (states (list '(pending) '(pending) '(kept "/s/ab/cd/page.html"))))
     (with-temp-file file (insert "a"))
     (cl-letf (((symbol-function 'org-moor--ask-server)
-               (lambda (server form) (setq asked (list server form)) "[[moor:x][a]]")))
-      (let ((command-line-args-left (list "--server=/run/s" dir file)))
-        (should (equal (with-output-to-string (org-moor-batch-take)) "[[moor:x][a]]\n"))
-        (should (equal asked `("/run/s" (org-moor-agent-take ,dir ,file nil))))))
+               (lambda (server form)
+                 (push (list server form) asked)
+                 (if (eq (car form) 'org-moor-agent-take) "[[moor:abcd][a]]" (pop states))))
+              ((symbol-function 'sleep-for) #'ignore))
+      (let ((command-line-args-left (list "--server=/run/s" dir "https://x.com/a")))
+        (should (equal (with-output-to-string (org-moor-batch-take))
+                       "[[moor:abcd][a]]\nReplica: /s/ab/cd/page.html\n"))
+        (should (equal (car (last asked))
+                       `("/run/s" (org-moor-agent-take ,dir "https://x.com/a" nil))))
+        (should (equal (car asked) `("/run/s" (org-moor-agent-state ,dir "abcd"))))
+        (should (= (length asked) 4))))
     (cl-letf (((symbol-function 'org-moor--ask-server)
                (lambda (&rest _) (signal 'file-error '("Cannot reach Emacs")))))
       (let ((command-line-args-left (list "--server=/run/s" dir file)))
-        (should (string-match-p "\\`\\[\\[moor:[^]]+\\]\\[a\\]\\]\n\\'"
+        (should (string-match-p "\\`\\[\\[moor:[^]]+\\]\\[a\\]\\]\nReplica: .*a\\.txt\n\\'"
                                 (with-output-to-string (org-moor-batch-take))))))
     (delete-directory dir t)))
+
+(ert-deftest org-moor-test-batch-take-stops-waiting ()
+  "A replica still being kept after `org-moor-agent-timeout' is said so."
+  (let ((org-moor-agent-timeout 0))
+    (cl-letf (((symbol-function 'org-moor--ask-server)
+               (lambda (_server form)
+                 (if (eq (car form) 'org-moor-agent-take) "[[moor:abcd][a]]" '(pending))))
+              ((symbol-function 'sleep-for) #'ignore))
+      (let ((command-line-args-left (list "--server=/run/s" "/s" "https://x.com/a")))
+        (should (string-match-p "\nNo replica yet: "
+                                (with-output-to-string (org-moor-batch-take))))))))
+
+(ert-deftest org-moor-test-agent-state ()
+  "What a source has is told an agent: its replica, a sign-in, its origin."
+  (org-moor-test--with-notes ""
+    (let* ((record (org-moor-new-source "Wiki" "https://w.example/p" 'web))
+           (id (plist-get record :id))
+           (sources org-moor-sources-directory))
+      (should (equal (org-moor-agent-state sources id) '(origin "https://w.example/p")))
+      (should (string-prefix-p "No replica: only where"
+                               (org-moor-agent-state-line (org-moor-agent-state sources id))))
+      (org-moor-record-set record :signin "login.example")
+      (should (equal (org-moor-agent-state sources id) '(signin "login.example")))
+      (should (string-match-p "login\\.example showed a sign-in page"
+                              (org-moor-agent-state-line '(signin "login.example"))))
+      (puthash id t org-moor--keeping)
+      (unwind-protect (should (equal (org-moor-agent-state sources id) '(pending)))
+        (remhash id org-moor--keeping))
+      (with-temp-file (expand-file-name "page.html" (plist-get record :dir)))
+      (org-moor-record-set record :file "page.html")
+      (should (equal (org-moor-agent-state sources id)
+                     (list 'kept (expand-file-name "page.html" (plist-get record :dir))))))))
 
 (ert-deftest org-moor-test-batch-take-prints-utf-8 ()
   "The link is printed in UTF-8, whatever the system's code page."
   (let ((coding 'unset))
-    (cl-letf (((symbol-function 'org-moor--ask-server) (lambda (&rest _) "[[moor:x][題]]"))
+    (cl-letf (((symbol-function 'org-moor--ask-server)
+               (lambda (_server form)
+                 (if (eq (car form) 'org-moor-agent-take) "[[moor:x][題]]" '(kept "/s/題.html"))))
               ((symbol-function 'princ)
                (lambda (&rest _) (setq coding coding-system-for-write))))
       (let ((command-line-args-left (list "--server=/run/s" "/s" "https://x.com/")))

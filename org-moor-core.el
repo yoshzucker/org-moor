@@ -70,12 +70,15 @@ a document's in a directory of its own, say -- adds one here.")
   '((:origin . "MOOR_ORIGIN")
     (:via . "MOOR_VIA")
     (:file . "MOOR_FILE")
-    (:taken . "MOOR_TAKEN"))
+    (:taken . "MOOR_TAKEN")
+    (:signin . "MOOR_SIGNIN"))
   "The properties of a record, by the keys a RECORD plist has them under.
 Origin: where the source was when it was taken, a URL or a path, kept
 after it changes or is gone.  Via: how it arrived, as a word: web, file,
 mail, chat, clipboard.  File: the replica's name in the source's
-directory.  Taken: when, as an inactive timestamp.")
+directory.  Taken: when, as an inactive timestamp.  Signin: the host of
+an origin that showed a sign-in page in place of the page, while its
+replica waits for a sign-in.")
 
 ;;;; Where sources are
 
@@ -196,7 +199,8 @@ and record are made; its replica is for the caller to put there."
 (defun org-moor-record-set (record key value)
   "Set KEY of RECORD to VALUE in its record file, and return RECORD so.
 KEY is :title or a key of `org-moor--record-keys'.  Only that line is
-written, so that anything else written in the record stays."
+written, so that anything else written in the record stays; a VALUE of
+nil takes the line out."
   (let ((file (expand-file-name org-moor-record-file (plist-get record :dir)))
         (case-fold-search t))
     (with-temp-buffer
@@ -211,19 +215,24 @@ written, so that anything else written in the record stays."
             (insert "#+title: " value "\n"))
         (let ((name (or (alist-get key org-moor--record-keys)
                         (error "org-moor: not a key of a record: %S" key))))
-          (if (re-search-forward (concat "^[ \t]*:" name ":.*$") nil t)
-              (replace-match (org-moor--property-line name value) t t)
+          (cond
+           ((not value)
+            (when (re-search-forward (concat "^[ \t]*:" name ":.*\n?") nil t)
+              (replace-match "" t t)))
+           ((re-search-forward (concat "^[ \t]*:" name ":.*$") nil t)
+            (replace-match (org-moor--property-line name value) t t))
+           (t
             (if (re-search-forward "^[ \t]*:END:" nil t)
                 (progn (beginning-of-line)
                        (insert (org-moor--property-line name value) "\n"))
               (goto-char (point-min))
               (insert ":PROPERTIES:\n"
                       (org-moor--property-line name value) "\n"
-                      ":END:\n")))))
+                      ":END:\n"))))))
       (let ((coding-system-for-write 'utf-8-unix))
         (write-region nil nil file nil 'silent))))
   (let ((record (plist-put record key value)))
-    (if (eq key :file)
+    (if (and (eq key :file) value)
         (let ((replica (expand-file-name value (plist-get record :dir))))
           (plist-put record :replica (and (file-exists-p replica) replica)))
       record)))
@@ -655,6 +664,10 @@ original -- and where it came from, how and when."
                                   (file-size-human-readable
                                    (file-attribute-size (file-attributes replica)))))
                     (file (propertize (format "replica %s is gone" file) 'face 'warning))
+                    ((plist-get record :signin)
+                     (propertize (format "no replica, waiting for a sign-in to %s"
+                                         (plist-get record :signin))
+                                 'face 'warning))
                     (t (propertize "no replica" 'face 'warning)))))
         (string-join (delq nil (list (concat "moor: " what)
                                      (and (not (string-empty-p had)) had)
@@ -783,10 +796,12 @@ are named by it alone where `org-moor-place-alone-p' says so of that file."
      "line is a line of its file there.\n\n"
      "A file or a web page that is not a source yet is taken in by this\n"
      "command, which prints a link to it, [[moor:ID][TITLE]]:\n\n"
-     "    " (org-moor-batch-command (org-moor-sources origin)) "\n"
-     (if (org-moor--server-file)
-         "\nA web page's replica arrives after the link, so read it a little later.\n"
-       ""))))
+     "    " (org-moor-batch-command (org-moor-sources origin)) "\n\n"
+     "On the line after the link it prints `Replica: PATH', the file to read,\n"
+     "or `No replica: ...' when the page could not be kept -- it needs a sign-in,\n"
+     "or a browser -- which the user keeps later.  Cite such a source by its\n"
+     "link all the same, but write nothing it says, and end by saying which\n"
+     "sources are still to be read.\n")))
 
 (add-hook 'org-dock-link-file-functions #'org-moor-link-file)
 (add-hook 'org-dock-request-functions #'org-moor-request-text 10)

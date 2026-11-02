@@ -150,16 +150,40 @@ the request says which sources they are and how to cite them."
 
 (ert-deftest org-moor-test-batch-take ()
   "An agent takes a file into a sources directory, copied, and is printed
-a link to it named by its title."
+a link to it named by its title, and the replica to read."
   (org-moor-test--with-notes ""
     (let* ((file (expand-file-name "minutes.txt" dir))
            (command-line-args-left (list org-moor-sources-directory file "Minutes"))
            printed)
       (with-temp-file file (insert "We agreed.\n"))
       (setq printed (with-output-to-string (org-moor-batch-take)))
-      (should (string-match "\\`\\[\\[moor:\\([^]]+\\)\\]\\[Minutes\\]\\]\n\\'" printed))
-      (should (plist-get (org-moor-record (match-string 1 printed)) :replica))
+      (should (string-match "\\`\\[\\[moor:\\([^]]+\\)\\]\\[Minutes\\]\\]\nReplica: \\(.+\\)\n\\'"
+                            printed))
+      (let ((id (match-string 1 printed))
+            (replica (match-string 2 printed)))
+        (should (equal (plist-get (org-moor-record id) :replica) replica)))
       (should (file-exists-p file)))))
+
+(ert-deftest org-moor-test-record-set-nil-takes-the-line-out ()
+  "A key set to nil is gone from the record file and from the record."
+  (org-moor-test--with-notes ""
+    (let ((record (org-moor-new-source "Wiki" "https://w.example/p" 'web)))
+      (org-moor-record-set record :signin "login.example")
+      (should (equal (plist-get (org-moor-record (plist-get record :id)) :signin)
+                     "login.example"))
+      (org-moor-record-set record :signin nil)
+      (should-not (plist-get record :signin))
+      (should-not (plist-get (org-moor-record (plist-get record :id)) :signin))
+      (should (equal (plist-get (org-moor-record (plist-get record :id)) :origin)
+                     "https://w.example/p")))))
+
+(ert-deftest org-moor-test-summary-says-a-sign-in-is-waited-for ()
+  "A source waiting for a sign-in says so, and to where."
+  (org-moor-test--with-notes ""
+    (let ((record (org-moor-new-source "Wiki" "https://w.example/p" 'web)))
+      (org-moor-record-set record :signin "login.example")
+      (should (string-match-p "waiting for a sign-in to login\\.example"
+                              (org-moor-link-summary (plist-get record :id)))))))
 
 (ert-deftest org-moor-test-link-completes-by-title ()
   "`org-insert-link' completes a `moor:' link by title, newest first,

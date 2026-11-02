@@ -16,20 +16,20 @@
 
   A file opened in a browser is taken as a file: one on disk by its path,
   and one behind a sign-in -- PowerPoint or Word for the web, a PDF in a
-  document library's viewer, a wiki page its site exports as a PDF, a page
-  only SingleFile can keep -- by having the browser, which is signed in,
-  keep it: it is sent to a URL that downloads it, or sent the keys of an
-  extension that saves the page.  Emacs is not kept waiting for that: it
-  is told the file is arriving in the Downloads folder, and takes it from
-  there once whole, with its URL kept as where it came from.  Any other
-  URL Emacs fetches itself.
+  document library's viewer, a wiki page its site exports as a PDF -- by
+  having the browser, which is signed in, download it from a URL that
+  says to.  Emacs is not kept waiting for that: it is told the file is
+  arriving in the Downloads folder, and takes it from there once whole,
+  with its URL kept as where it came from.  A page only a browser shows
+  whole Emacs has saved by single-file, in a browser of its own that shows
+  no window.  Any other URL Emacs fetches itself.
 
   Which sites those are is the configuration's, a JSON file at
   ~/.config/org-moor/front.json ($env:XDG_CONFIG_HOME when set): under
   sites, an entry -- one { } -- each, its match a regular expression for
   the URL, and either download, the URL to send the browser to, {name} in
-  it the group of that name in match, or keys, what to type in the
-  browser, in SendKeys' notation -- ^+y is Ctrl+Shift+Y; and title, when
+  it the group of that name in match, or singlefile, true for a page
+  single-file saves; and title, when
   given, a regular expression for what the site adds to the window's
   title, which is taken off.  A URL gets the first entry whose match fits
   it, and nothing from any other.  Without
@@ -60,19 +60,11 @@
 .PARAMETER Resolve
   A URL to look up instead of reading a window, for Emacs: printed are
   the URL a browser downloads it from, by the configuration's entries, and
-  the Downloads folder, a line each; for an entry that gives keys, the URL
-  itself, the Downloads folder and keys, for Emacs to open the URL and
-  then start this script with -Press; nothing when no entry gives either.
+  the Downloads folder, a line each; for an entry that gives singlefile,
+  the URL itself and singlefile; nothing when no entry gives either.
   Nothing is opened.
-
-.PARAMETER Press
-  A URL Emacs has just opened in a browser, whose entry gives keys: once
-  the window in front shows it and its title has stayed the same for a
-  moment, as a page's does once it has loaded, its keys are typed there.
-  Nothing is typed when it is not in front within -PressTimeout seconds.
 #>
-param([long]$Hwnd = 0, [switch]$WriteConfig, [string]$Resolve = '',
-      [string]$Press = '', [int]$PressTimeout = 60)
+param([long]$Hwnd = 0, [switch]$WriteConfig, [string]$Resolve = '')
 $ErrorActionPreference = 'SilentlyContinue'
 
 $ConfigHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
@@ -103,9 +95,9 @@ function Read-Sites {
 
 # For a URL matching an entry's match, the browser is made to keep it: it is
 # sent to the entry's download, {name} there being the group of that name in
-# match, or sent the entry's keys -- SingleFile's shortcut, say -- in the
-# window in front; the entry's title is what is taken off the window's title
-# then.  Return the first that matches, its download filled in, or $null.
+# match; or, for an entry whose singlefile is true, Emacs has single-file
+# save it.  The entry's title is what is taken off the window's title then.
+# Return the first that matches, its download filled in, or $null.
 function Get-BrowserKeep($url) {
   foreach ($entry in Read-Sites) {
     if ($entry.match -and $url -match $entry.match) {
@@ -114,8 +106,8 @@ function Get-BrowserKeep($url) {
         [regex]::Replace($entry.download, '\{(\w+)\}',
           { param($m) [string]$groups[$m.Groups[1].Value] })
       } else { '' }
-      return @{ Download = $download; Keys = [string]$entry.keys; Title = [string]$entry.title
-                Match = [string]$entry.match }
+      return @{ Download = $download; Singlefile = [bool]$entry.singlefile
+                Title = [string]$entry.title }
     }
   }
   return $null
@@ -131,19 +123,18 @@ function Get-Downloads {
 
 # For Emacs, taking a URL it was given rather than one in front: the URL a
 # browser downloads it from, by the same entries, and where to, a line each;
-# for keys, the URL itself, where to and `keys', the keys typed by -Press
-# once Emacs has opened it; nothing for a URL no entry gives either for.
+# for singlefile, the URL itself and `singlefile'; nothing for a URL no
+# entry gives either for.
 if ($Resolve) {
   $keep = Get-BrowserKeep $Resolve
-  if ($keep -and ($keep.Download -or $keep.Keys)) {
+  if ($keep -and ($keep.Download -or $keep.Singlefile)) {
     [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
     if ($keep.Download) {
       Write-Output $keep.Download
       Write-Output (Get-Downloads)
     } else {
       Write-Output $Resolve
-      Write-Output (Get-Downloads)
-      Write-Output 'keys'
+      Write-Output 'singlefile'
     }
   }
   exit 0
@@ -296,43 +287,13 @@ function Get-WindowUrl($window, $title) {
   return $url
 }
 
-# For Emacs, which has just opened a URL whose entry gives keys: they are
-# typed in the browser once it is in front showing a page of the entry --
-# a sign-in page is not one -- and the page's title has stayed the same
-# for a second and a half, as it does once the page has loaded.
-if ($Press) {
-  $keep = Get-BrowserKeep $Press
-  if (-not ($keep -and $keep.Keys)) { exit 0 }
-  $deadline = (Get-Date).AddSeconds($PressTimeout)
-  $last = $null; $steady = 0
-  while ((Get-Date) -lt $deadline) {
-    Start-Sleep -Milliseconds 500
-    $front = Get-FrontWindow
-    if (-not $front) { $last = $null; continue }
-    $proc = Get-Process -Id $front.Current.ProcessId
-    if ($proc.ProcessName -notmatch $Browsers) { $last = $null; continue }
-    $title = Get-PageTitle $front
-    $url = Get-WindowUrl $front $title
-    if (-not ($url -match $keep.Match)) { $last = $null; continue }
-    if ($title -eq $last) { $steady++ } else { $last = $title; $steady = 0 }
-    if ($steady -ge 3) {
-      $wsh = New-Object -ComObject WScript.Shell
-      [void]$wsh.AppActivate($proc.Id)
-      Start-Sleep -Milliseconds 150
-      $wsh.SendKeys($keep.Keys)
-      exit 0
-    }
-  }
-  exit 0
-}
-
 $window = if ($Hwnd -ne 0) { $AE::FromHandle([IntPtr]$Hwnd) } else { Get-FrontWindow }
 if (-not $window) { exit 0 }
 $handle = [IntPtr]$window.Current.NativeWindowHandle
 $proc = Get-Process -Id $window.Current.ProcessId
 $exe = $proc.ProcessName
 
-$path = ''; $url = ''; $origin = ''; $arriving = ''; $since = ''
+$path = ''; $url = ''; $origin = ''; $arriving = ''; $since = ''; $keepBy = ''
 $title = $window.Current.Name
 
 switch -Regex ($exe) {
@@ -399,17 +360,12 @@ switch -Regex ($exe) {
     } elseif ($url) {
       $keep = Get-BrowserKeep $url
       if ($keep -and $keep.Title) { $title = $title -replace $keep.Title, '' }
-      if ($keep -and ($keep.Download -or $keep.Keys)) {
+      if ($keep -and $keep.Download) {
         $arriving = Get-Downloads
         $since = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        if ($keep.Download) {
-          Start-Process -FilePath $proc.Path -ArgumentList $keep.Download
-        } else {
-          $wsh = New-Object -ComObject WScript.Shell
-          [void]$wsh.AppActivate($proc.Id)
-          Start-Sleep -Milliseconds 150
-          $wsh.SendKeys($keep.Keys)
-        }
+        Start-Process -FilePath $proc.Path -ArgumentList $keep.Download
+      } elseif ($keep -and $keep.Singlefile) {
+        $keepBy = 'singlefile'
       }
     }
   }
@@ -420,6 +376,7 @@ if (-not $path -and -not $url) { exit 0 }
 $q = if ($path) { 'path=' + [uri]::EscapeDataString($path) } else { 'url=' + [uri]::EscapeDataString($url) }
 if ($origin) { $q += '&origin=' + [uri]::EscapeDataString($origin) }
 if ($arriving) { $q += '&arriving=' + [uri]::EscapeDataString($arriving) + '&since=' + $since }
+if ($keepBy) { $q += '&keep=' + $keepBy }
 if ($title) { $q += '&title=' + [uri]::EscapeDataString($title) }
 $protocolUrl = 'org-protocol://moor?' + $q
 

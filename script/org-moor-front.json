@@ -12,9 +12,9 @@
       "title": " - Example Wiki$"
     },
     {
-      "note": "An example: a page only the browser can see whole, saved by SingleFile's shortcut, Ctrl+Shift+Y.  Give it your site.",
+      "note": "An example: a page only a browser shows whole, saved by single-file in a browser of its own that shows no window.  Give it your site.",
       "match": "^https://intranet\\.example\\.com/",
-      "keys": "^+y"
+      "singlefile": true
     }
   ]
 }
