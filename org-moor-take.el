@@ -778,18 +778,33 @@ Nil leaves single-file to find one where browsers are installed."
 
 (defcustom org-moor-singlefile-profile nil
   "The browser profile directory single-file saves pages signed in as, or nil.
-`org-moor-sign-in' makes it and signs it in; a page is then saved with a
-copy of it, the profile itself left as it is.  Nil saves pages signed
-in nowhere.  It is a sign-in, so it is to be where only you can read it."
+`org-moor-sign-in' makes it and signs it in.  A page is then saved in
+the browser kept open in it -- see `org-moor-singlefile-browser-idle' --
+or, without one, with a copy of it, the profile itself left as it is.
+Nil saves pages signed in nowhere.  It is a sign-in, so it is to be
+where only you can read it."
   :type '(choice (const :tag "None" nil) directory)
   :group 'org-moor)
 
 (defcustom org-moor-singlefile-arguments nil
   "More arguments given single-file, before the URL.
-When to take a page as loaded, say: \='(\"--browser-wait-until\"
-\"InteractiveTime\") for a site whose page never stops fetching, which
-single-file otherwise waits on for --browser-load-max-time."
+They come after the ones given here, and so are taken over them: say,
+\='(\"--browser-wait-until\" \"InteractiveTime\") to have a page taken as
+loaded by the browser's measure, in place of
+`org-moor-singlefile-when-ready'."
   :type '(repeat string)
+  :group 'org-moor)
+
+(defcustom org-moor-singlefile-when-ready t
+  "Non-nil to have single-file save a page once the page is ready.
+The page is taken as loaded at DOMContentLoaded, and script/org-moor-ready.js
+holds the saving until the page's own requests are answered and its
+document stops changing, rather than single-file waiting for the network
+to go quiet, which a page that keeps fetching never does -- for
+--browser-load-max-time, a minute -- or for InteractiveTime, five seconds
+of nothing after the page is drawn.  Nil leaves single-file to wait as
+`org-moor-singlefile-arguments' says."
+  :type 'boolean
   :group 'org-moor)
 
 (defcustom org-moor-singlefile-profile-caches
@@ -805,6 +820,31 @@ page it saves, and these are caches the browser fills again: what a
 sign-in is -- cookies, the key they are kept with, extensions -- is not
 among them.  Removed by `org-moor-sign-in' once the browser is quit."
   :type '(repeat string)
+  :group 'org-moor)
+
+(defcustom org-moor-singlefile-browser-idle 120
+  "Seconds the browser single-file saves pages in is kept after the last page.
+With `org-moor-singlefile-browser', that browser is started here, with
+no window, in `org-moor-singlefile-profile' itself, the first time a
+page is saved, and single-file saves each page in it by --browser-server:
+it starts no browser of its own and copies no profile for it, which is
+most of the time a page takes.  The browser keeps what the sites send
+it, as a browser you read in does.  It is quit once this many seconds
+pass with no page being saved, when Emacs is, and before
+`org-moor-sign-in' opens the profile.  While it runs, any program here
+can drive it through its debugging port, as one can a browser
+single-file starts while it saves a page.  Nil, or with no
+`org-moor-singlefile-browser', has single-file start a browser for each
+page, in a copy of the profile."
+  :type '(choice (const :tag "A browser for each page" nil) integer)
+  :group 'org-moor)
+
+(defcustom org-moor-singlefile-timeout 300
+  "Seconds single-file is given to save a page before it is stopped.
+single-file stops waiting for a page by its own --browser-load-max-time
+and --browser-capture-max-time; this is for a browser that does not
+answer at all, which would else keep the source pending for good."
+  :type 'integer
   :group 'org-moor)
 
 (defun org-moor--singlefile-profile-trim ()
@@ -824,6 +864,17 @@ single-file writes the URL it was given, not the one a sign-in sent the
 browser on to; this one writes that, as a meta element named
 org-moor-location.")
 
+(defconst org-moor--ready-script
+  (expand-file-name "org-moor-ready.js" org-moor-script-directory)
+  "A script run in a page single-file saves, holding it until the page is ready.
+See `org-moor-singlefile-when-ready'.")
+
+(defconst org-moor--browser-quiet-args '("--disable-quic")
+  "Arguments every browser started for single-file is given.
+HTTP/3 has the browser open UDP sockets on every address, which a
+firewall asks about for a browser it has no rule for; without it, the
+browser listens on nothing but its debugging port, on this machine.")
+
 (defun org-moor--singlefile-browser-args ()
   "Return the arguments telling single-file which browser to drive."
   (and org-moor-singlefile-browser
@@ -832,14 +883,17 @@ org-moor-location.")
 (defun org-moor-singlefile-location (file)
   "Return where the page saved in FILE was when it was saved, or nil.
 As `org-moor--location-script' wrote it there."
+  ;; As bytes: a page with its images in it runs to megabytes, of which
+  ;; only the one element is read, and only it is decoded.
   (with-temp-buffer
-    (let ((coding-system-for-read 'utf-8))
-      (insert-file-contents file))
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally file)
     (goto-char (point-min))
     (when (re-search-forward
            "<meta name=\"?org-moor-location\"? content=\\(?:\"\\([^\"]*\\)\"\\|\\([^ >]*\\)\\)"
            nil t)
-      (string-replace "&amp;" "&" (or (match-string 1) (match-string 2))))))
+      (string-replace "&amp;" "&" (decode-coding-string
+                                   (or (match-string 1) (match-string 2)) 'utf-8)))))
 
 (defun org-moor-signed-out-p (url location)
   "Non-nil when a page asked for at URL was shown at LOCATION, elsewhere.
@@ -865,49 +919,342 @@ of its entry, as a sign-in page on the site's own host is not."
   :type 'function
   :group 'org-moor)
 
+;;;;; The browser kept for single-file
+
+(defconst org-moor--singlefile-server-args
+  '("--headless" "--remote-debugging-port=0"
+    "--no-first-run" "--no-default-browser-check"
+    ;; What single-file starts a browser with for a page to be saved whole
+    ;; -- frames loaded however far down, timers run with no window --
+    ;; and with nothing fetched for the browser itself.
+    "--disable-features=LazyFrameLoading,AutoExpandDetailsElement,PaintHolding,Translate,MediaRouter"
+    "--disable-background-timer-throttling" "--disable-renderer-backgrounding"
+    "--disable-backgrounding-occluded-windows" "--disable-component-update"
+    "--mute-audio" "--window-size=1280,720")
+  "Arguments the browser kept for single-file is started with.
+Not single-file's --no-sandbox: started here, the browser keeps it.")
+
+(defvar org-moor--singlefile-server nil
+  "The browser process kept for single-file, or nil.")
+
+(defvar org-moor--singlefile-server-url nil
+  "The address single-file reaches the browser kept for it at, once it answers.")
+
+(defvar org-moor--singlefile-server-waiting nil
+  "Functions waiting for the browser kept for single-file to answer.")
+
+(defvar org-moor--singlefile-server-timer nil
+  "The timer quitting the browser kept for single-file, or nil.")
+
+(defvar org-moor--singlefile-server-queue nil
+  "Pages waiting for the browser kept for single-file, each (URL FILE DONE AGAIN).
+AGAIN is non-nil for a page being saved a second time.")
+
+(defvar org-moor--singlefile-server-busy nil
+  "Non-nil while single-file saves a page in the browser kept for it.")
+
+(defvar org-moor--signing-in nil
+  "Non-nil while `org-moor-sign-in' has the profile open in a browser.
+The pages queued for the browser kept for single-file wait meanwhile, to
+be saved signed in once it is quit.")
+
+(defun org-moor--singlefile-server-p ()
+  "Non-nil when single-file saves pages in a browser kept for it."
+  (and org-moor-singlefile-browser org-moor-singlefile-browser-idle t))
+
+(defun org-moor--singlefile-server-answered (url)
+  "Tell what waits for the browser kept for single-file that it is at URL.
+Nil when it is not there."
+  (setq org-moor--singlefile-server-url url)
+  (let ((waiting (nreverse org-moor--singlefile-server-waiting)))
+    (setq org-moor--singlefile-server-waiting nil)
+    (dolist (then waiting) (funcall then url))))
+
+(defun org-moor--singlefile-server-gone (proc)
+  "Let go of PROC, the browser kept for single-file, which has quit.
+Its temporary profile goes with it."
+  (when-let* ((temp (process-get proc 'org-moor-temp)))
+    (ignore-errors (delete-directory temp t)))
+  (when (eq proc org-moor--singlefile-server)
+    (setq org-moor--singlefile-server nil)
+    (org-moor--singlefile-server-answered nil)))
+
+(defun org-moor--singlefile-server-stop ()
+  "Quit the browser kept for single-file, if it runs."
+  (when (timerp org-moor--singlefile-server-timer)
+    (cancel-timer org-moor--singlefile-server-timer))
+  (setq org-moor--singlefile-server-timer nil)
+  (when-let* ((proc org-moor--singlefile-server))
+    (when (process-live-p proc)
+      (delete-process proc)
+      ;; So that the profile is free for the browser started next in it.
+      (with-timeout (5 nil)
+        (while (process-live-p proc) (accept-process-output nil 0.05))))
+    (org-moor--singlefile-server-gone proc)))
+
+(defun org-moor--singlefile-server-rest ()
+  "Have the browser kept for single-file quit after its idle time.
+Counted from now, unless a page waits for it, or is saved in it, then."
+  (when (timerp org-moor--singlefile-server-timer)
+    (cancel-timer org-moor--singlefile-server-timer))
+  (setq org-moor--singlefile-server-timer
+        (and org-moor--singlefile-server
+             (run-with-timer
+              org-moor-singlefile-browser-idle nil
+              (lambda ()
+                (setq org-moor--singlefile-server-timer nil)
+                (unless (or org-moor--singlefile-server-busy
+                            org-moor--singlefile-server-queue)
+                  (org-moor--singlefile-server-stop)))))))
+
+(defun org-moor--singlefile-server-port (file)
+  "Return the port the browser wrote to FILE, its DevToolsActivePort, or nil."
+  (when (file-readable-p file)
+    (with-temp-buffer
+      (ignore-errors (insert-file-contents file))
+      (goto-char (point-min))
+      (and (looking-at "\\([0-9]+\\)\n") (match-string 1)))))
+
+(defun org-moor--profile-in-use-p (dir)
+  "Non-nil when a browser runs in the profile DIR.
+Chrome holds the profile's lockfile open on Windows, and elsewhere points
+its SingletonLock at HOST-PID."
+  (if (memq system-type '(windows-nt ms-dos))
+      (let ((lock (expand-file-name "lockfile" dir)))
+        ;; One a browser that is gone left behind can be deleted.
+        (and (file-exists-p lock)
+             (condition-case nil (progn (delete-file lock) nil)
+               (file-error t))))
+    (let ((target (file-symlink-p (expand-file-name "SingletonLock" dir))))
+      (and (stringp target)
+           (string-match "-\\([0-9]+\\)\\'" target)
+           (process-attributes (string-to-number (match-string 1 target)))
+           t))))
+
+(defun org-moor--profile-in-use-message (dir)
+  "Return the words saying a browser left running has the profile DIR open."
+  (format "org-moor: a browser left running has %s open -- quit the one started with --user-data-dir=%s"
+          dir dir))
+
+(defun org-moor--singlefile-server-start ()
+  "Start the browser kept for single-file, and wait for it to answer.
+Return its process, or nil when it cannot be started.  It is not when a
+browser left running -- by an Emacs that was stopped, not quit -- has
+the profile open: a browser started there would hand its page to that
+one and quit.  Pages are then saved with a copy of the profile, and the
+echo area says so."
+  (let* ((temp (and (not org-moor-singlefile-profile)
+                    (make-temp-file "org-moor-browser" t)))
+         (dir (directory-file-name
+               (or temp (expand-file-name org-moor-singlefile-profile))))
+         (port-file (expand-file-name "DevToolsActivePort" dir))
+         (proc nil))
+    (make-directory dir t)
+    ;; One a browser quit without a word left behind names its port.
+    (ignore-errors (delete-file port-file))
+    (if (and (not temp) (org-moor--profile-in-use-p dir))
+        (message "%s" (propertize
+                       (concat (org-moor--profile-in-use-message dir)
+                               "; pages are saved with a copy of it meanwhile")
+                       'face 'warning))
+      (condition-case err
+          (setq proc (make-process
+                      :name "org-moor-singlefile-browser"
+                      :buffer nil
+                      :coding (cons 'utf-8 (org-moor-argument-coding))
+                      :noquery t
+                      :command `(,(expand-file-name org-moor-singlefile-browser)
+                                 ,(concat "--user-data-dir=" dir)
+                                 ,@org-moor--singlefile-server-args
+                                 ,@org-moor--browser-quiet-args
+                                 "about:blank")
+                      :sentinel (lambda (proc _event)
+                                  (unless (process-live-p proc)
+                                    (org-moor--singlefile-server-gone proc)))))
+        (error (message "org-moor: %s" (error-message-string err))
+               (when temp (ignore-errors (delete-directory temp t))))))
+    (when proc
+      (process-put proc 'org-moor-temp temp)
+      (setq org-moor--singlefile-server proc
+            org-moor--singlefile-server-url nil)
+      (add-hook 'kill-emacs-hook #'org-moor--singlefile-server-stop)
+      (let ((deadline (+ (float-time) 30)))
+        (letrec ((poll
+                  (lambda ()
+                    (when (eq proc org-moor--singlefile-server)
+                      (if-let* ((port (org-moor--singlefile-server-port port-file)))
+                          (org-moor--singlefile-server-answered
+                           (concat "http://127.0.0.1:" port))
+                        (if (< (float-time) deadline)
+                            (run-with-timer 0.1 nil poll)
+                          (message "org-moor: the browser for single-file did not answer")
+                          (org-moor--singlefile-server-stop)))))))
+          (run-with-timer 0.1 nil poll))))
+    proc))
+
+(defun org-moor--singlefile-server (then)
+  "Call THEN with the address of the browser kept for single-file.
+It is started when it does not run; THEN is given nil when it cannot be."
+  (cond
+   ((not (process-live-p org-moor--singlefile-server))
+    (push then org-moor--singlefile-server-waiting)
+    (unless (org-moor--singlefile-server-start)
+      (org-moor--singlefile-server-answered nil)))
+   (org-moor--singlefile-server-url
+    (funcall then org-moor--singlefile-server-url))
+   (t (push then org-moor--singlefile-server-waiting))))
+
+(defun org-moor--singlefile-server-next ()
+  "Have single-file save the next page queued for the browser kept for it.
+Unless it is saving one, or the profile is open to sign in."
+  (unless (or org-moor--singlefile-server-busy org-moor--signing-in)
+    (when-let* ((page (pop org-moor--singlefile-server-queue)))
+      (setq org-moor--singlefile-server-busy t)
+      (org-moor--singlefile-server
+       (lambda (server)
+         (org-moor--singlefile-run
+          (nth 0 page) (nth 1 page) server
+          (apply-partially #'org-moor--singlefile-server-saved
+                           page server org-moor--singlefile-server)))))))
+
+(defun org-moor--singlefile-server-saved (page server browser saved)
+  "Finish PAGE, of the queue, which single-file SAVED or did not.
+In the browser at SERVER, the process BROWSER, or, nil, in one of its own.
+A page not saved because the browser went is queued first, once, for
+the browser started again; else its DONE is called.  Then the next."
+  (pcase-let ((`(,url ,file ,done ,again) page))
+    (setq org-moor--singlefile-server-busy nil)
+    (unwind-protect
+        (if (and (not saved) server (not again) (not (process-live-p browser)))
+            (progn
+              (message "org-moor: the browser for single-file went; %s is saved again" url)
+              (push (list url file done t) org-moor--singlefile-server-queue))
+          (org-moor--singlefile-server-rest)
+          (funcall done saved))
+      (org-moor--singlefile-server-next))))
+
+;;;;; Saving a page
+
+(defun org-moor--singlefile-command (url file server)
+  "Return the single-file command saving the page at URL to FILE.
+In the browser at SERVER, the address of one kept for it, or, nil, in
+one of single-file's own."
+  `(,org-moor-singlefile-program
+    ,@(if server
+          (list "--browser-server" server)
+        `(,@(org-moor--singlefile-browser-args)
+          ,@(and org-moor-singlefile-profile
+                 (list "--browser-profile"
+                       (expand-file-name org-moor-singlefile-profile)))
+          ;; Joined, as a value that is an option itself.
+          ,@(mapcar (lambda (arg) (concat "--browser-arg=" arg))
+                    org-moor--browser-quiet-args)))
+    "--browser-script" ,org-moor--location-script
+    ;; Else a file there already has the page saved beside it.
+    "--filename-conflict-action" "overwrite"
+    ,@(and org-moor-singlefile-when-ready
+           (list "--browser-wait-until" "DOMContentLoaded"
+                 "--browser-wait-until-delay" "0"
+                 "--browser-script" org-moor--ready-script))
+    ,@org-moor-singlefile-arguments
+    ,(url-encode-url url) ,file))
+
+(defun org-moor--singlefile-output (buffer)
+  "Return the last lines single-file wrote in BUFFER, for a message."
+  (with-current-buffer buffer
+    (let ((lines (last (split-string (buffer-string) "[\r\n]+" t "[ \t]+") 3)))
+      (and lines (string-join lines " / ")))))
+
+(defun org-moor--singlefile-run (url file server done)
+  "Have single-file save the page at URL to FILE, then call DONE.
+In the browser at SERVER, as `org-moor--singlefile-command' says.  DONE
+is given non-nil when FILE has the page; when not, the echo area says
+why.  single-file is stopped after `org-moor-singlefile-timeout'."
+  (let* ((out (generate-new-buffer " *org-moor-singlefile*"))
+         (timer nil)
+         (failed
+          (lambda (why)
+            (ignore-errors (delete-file file))
+            (message "%s" (propertize
+                           (format "org-moor: single-file did not save %s%s"
+                                   url (if why (concat ": " why) ""))
+                           'face 'warning))))
+         (proc
+          (condition-case err
+              (make-process
+               :name "org-moor-singlefile"
+               :buffer out
+               ;; What it writes is read only for a message, and an error the
+               ;; system gives it comes in the system's code page.
+               :coding (cons 'undecided (org-moor-argument-coding))
+               :noquery t
+               :command (org-moor--singlefile-command url file server)
+               :sentinel
+               (lambda (proc _event)
+                 (unless (process-live-p proc)
+                   (when timer (cancel-timer timer))
+                   (let ((saved (and (zerop (process-exit-status proc))
+                                     (file-exists-p file)
+                                     (> (file-attribute-size (file-attributes file)) 0))))
+                     (unless saved
+                       (funcall failed (if (process-get proc 'org-moor-timeout)
+                                           (format "in %d seconds" org-moor-singlefile-timeout)
+                                         (org-moor--singlefile-output out))))
+                     (kill-buffer out)
+                     (funcall done saved)))))
+            (error (kill-buffer out)
+                   (funcall failed (error-message-string err))
+                   (funcall done nil)
+                   nil))))
+    (when proc
+      (setq timer (run-with-timer org-moor-singlefile-timeout nil
+                                  (lambda ()
+                                    (when (process-live-p proc)
+                                      (process-put proc 'org-moor-timeout t)
+                                      (delete-process proc))))))
+    proc))
+
+(defun org-moor--singlefile-checked (url file done saved)
+  "Call DONE with what single-file SAVED of URL in FILE comes to.
+As `org-moor-singlefile' says: a page saved is told from a sign-in page
+by `org-moor-signed-out-function'."
+  (if (not saved)
+      (funcall done nil)
+    (let ((location (org-moor-singlefile-location file)))
+      (funcall org-moor-signed-out-function
+               url location
+               (lambda (out)
+                 (if (not out)
+                     (funcall done t)
+                   (message "org-moor: %s went to %s, taken for a sign-in page"
+                            url location)
+                   (delete-file file)
+                   (funcall done 'signin)))))))
+
 (defun org-moor-singlefile (url file done)
   "Save the page at URL to FILE by single-file, then call DONE.
 With t when it is saved, `signin' when a sign-in page was shown in its
 place -- see `org-moor-signed-out-function' -- and nil when it failed.
-Nothing is left in FILE but the page."
-  (if (not (executable-find org-moor-singlefile-program))
-      (progn (message "%s" (propertize
-                            (format "org-moor: no %s to save %s with"
-                                    org-moor-singlefile-program url)
-                            'face 'warning))
-             (funcall done nil))
-    (make-process
-     :name "org-moor-singlefile"
-     :buffer " *org-moor-singlefile*"
-     :coding (cons 'utf-8 (org-moor-argument-coding))
-     :noquery t
-     :command `(,org-moor-singlefile-program
-                ,@(org-moor--singlefile-browser-args)
-                ,@(and org-moor-singlefile-profile
-                       (list "--browser-profile"
-                             (expand-file-name org-moor-singlefile-profile)))
-                "--browser-script" ,org-moor--location-script
-                ;; Else a file there already has the page saved beside it.
-                "--filename-conflict-action" "overwrite"
-                ,@org-moor-singlefile-arguments
-                ,(url-encode-url url) ,file)
-     :sentinel (lambda (proc _event)
-                 (unless (process-live-p proc)
-                   (if (not (and (zerop (process-exit-status proc))
-                                 (file-exists-p file)
-                                 (> (file-attribute-size (file-attributes file)) 0)))
-                       (progn (ignore-errors (delete-file file))
-                              (funcall done nil))
-                     (let ((location (org-moor-singlefile-location file)))
-                       (funcall org-moor-signed-out-function
-                                url location
-                                (lambda (out)
-                                  (if (not out)
-                                      (funcall done t)
-                                    (message "org-moor: %s went to %s, taken for a sign-in page"
-                                             url location)
-                                    (delete-file file)
-                                    (funcall done 'signin)))))))))))
+In the browser kept for it, as `org-moor-singlefile-browser-idle' says,
+one page at a time: a page whose tab is not in front is not drawn, and
+waits there all the same, the time it is given running out.  Should
+that browser be gone when the page is not saved, it is saved once more,
+first, in the browser started again.  Nothing is left in FILE but the
+page."
+  (let ((checked (apply-partially #'org-moor--singlefile-checked url file done)))
+    (cond
+     ((not (executable-find org-moor-singlefile-program))
+      (message "%s" (propertize
+                     (format "org-moor: no %s to save %s with"
+                             org-moor-singlefile-program url)
+                     'face 'warning))
+      (funcall done nil))
+     ((not (org-moor--singlefile-server-p))
+      (org-moor--singlefile-run url file nil checked))
+     (t
+      (setq org-moor--singlefile-server-queue
+            (append org-moor--singlefile-server-queue (list (list url file checked nil))))
+      (org-moor--singlefile-server-next)))))
 
 (defun org-moor-singlefile-keep (url dir done)
   "Keep a replica of the page at URL in DIR by single-file; call DONE.
@@ -937,6 +1284,25 @@ by their host, the link at point's first."
                                 (mapcar (lambda (r) (plist-get r :origin)) waiting))))))
     (read-string "Sign in at URL: " (car urls) nil (cdr urls))))
 
+(defun org-moor--sign-in-command (url)
+  "Return the command opening a browser at URL to sign in, with a window.
+With `org-moor-singlefile-browser', that browser as it is; else
+single-file's, which makes the profile."
+  (let ((profile (expand-file-name org-moor-singlefile-profile)))
+    (if org-moor-singlefile-browser
+        `(,(expand-file-name org-moor-singlefile-browser)
+          ,(concat "--user-data-dir=" (directory-file-name profile))
+          "--no-first-run" "--no-default-browser-check"
+          ,@org-moor--browser-quiet-args
+          ,(url-encode-url url))
+      (list org-moor-singlefile-program "--create-browser-profile" profile
+            (url-encode-url url)))))
+
+(defun org-moor--signed-in ()
+  "Have the pages queued while the profile was open to sign in saved."
+  (setq org-moor--signing-in nil)
+  (org-moor--singlefile-server-next))
+
 ;;;###autoload (autoload 'org-moor-sign-in "org-moor" nil t)
 (defun org-moor-sign-in (url)
   "Sign in at URL in the browser single-file saves pages with.
@@ -949,50 +1315,55 @@ origin of the link at point, else of a source waiting for a sign-in.
 
 With `org-moor-singlefile-browser', the browser is started here, as it
 is, so that the window you sign in in keeps its sandbox, which
-single-file turns off in a browser it starts; else single-file starts it."
+single-file turns off in a browser it starts; else single-file starts it.
+The browser kept for single-file, see `org-moor-singlefile-browser-idle',
+is quit first, and started again for the next page."
   (interactive (list (org-moor--sign-in-url)))
   (unless org-moor-singlefile-profile
     (user-error "org-moor: no org-moor-singlefile-profile to sign in"))
   (unless (or org-moor-singlefile-browser
               (executable-find org-moor-singlefile-program))
     (user-error "org-moor: no %s" org-moor-singlefile-program))
+  ;; A profile is open in one browser at a time: pages queued meanwhile
+  ;; wait for this one to be quit.
+  (setq org-moor--signing-in t)
+  (org-moor--singlefile-server-stop)
+  ;; Else the window would be handed to that browser, which shows none.
+  (let ((profile (directory-file-name (expand-file-name org-moor-singlefile-profile))))
+    (when (org-moor--profile-in-use-p profile)
+      (org-moor--signed-in)
+      (user-error "%s" (org-moor--profile-in-use-message profile))))
   (let ((host (url-host (url-generic-parse-url url)))
         (sources (org-moor-sources)))
-    (make-process
-     :name "org-moor-sign-in"
-     :buffer " *org-moor-sign-in*"
-     :coding (cons 'utf-8 (org-moor-argument-coding))
-     :noquery t
-     :command
-     (if org-moor-singlefile-browser
-         (list (expand-file-name org-moor-singlefile-browser)
-               (concat "--user-data-dir="
-                       (directory-file-name (expand-file-name org-moor-singlefile-profile)))
-               "--no-first-run" "--no-default-browser-check"
-               (url-encode-url url))
-       `(,org-moor-singlefile-program
-         "--create-browser-profile"
-         ,(expand-file-name org-moor-singlefile-profile)
-         ,(url-encode-url url)))
-     :sentinel
-     (lambda (proc _event)
-       (unless (process-live-p proc)
-         (org-moor--singlefile-profile-trim)
-         (let ((waiting (seq-filter (lambda (r) (equal (plist-get r :signin) host))
-                                    (org-moor-sources-in sources))))
-           (cond
-            ((not (zerop (process-exit-status proc)))
-             (message "%s" (propertize (format "org-moor: the browser for %s did not close well"
-                                               host)
-                                       'face 'warning)))
-            ;; Whether you signed in there is not known here: only that
-            ;; the browser was quit.
-            ((and waiting
-                  (y-or-n-p (format "Browser for %s closed; keep the %d replica%s waiting for it? "
-                                    host (length waiting) (if (cdr waiting) "s" ""))))
-             (org-moor-keep-replica waiting))
-            (t (message "Browser for %s closed; the profile keeps what was signed in there"
-                        host)))))))
+    (condition-case err
+        (make-process
+         :name "org-moor-sign-in"
+         :buffer " *org-moor-sign-in*"
+         :coding (cons 'utf-8 (org-moor-argument-coding))
+         :noquery t
+         :command (org-moor--sign-in-command url)
+         :sentinel
+         (lambda (proc _event)
+           (unless (process-live-p proc)
+             (org-moor--singlefile-profile-trim)
+             (org-moor--signed-in)
+             (let ((waiting (seq-filter (lambda (r) (equal (plist-get r :signin) host))
+                                        (org-moor-sources-in sources))))
+               (cond
+                ((not (zerop (process-exit-status proc)))
+                 (message "%s" (propertize (format "org-moor: the browser for %s did not close well"
+                                                   host)
+                                           'face 'warning)))
+                ;; Whether you signed in there is not known here: only that
+                ;; the browser was quit.
+                ((and waiting
+                      (y-or-n-p (format "Browser for %s closed; keep the %d replica%s waiting for it? "
+                                        host (length waiting) (if (cdr waiting) "s" ""))))
+                 (org-moor-keep-replica waiting))
+                (t (message "Browser for %s closed; the profile keeps what was signed in there"
+                            host)))))))
+      (error (org-moor--signed-in)
+             (signal (car err) (cdr err))))
     (message "Sign in to %s in the window, then quit the browser" host)))
 
 (defun org-moor-front-download (url done)

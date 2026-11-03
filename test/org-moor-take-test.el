@@ -636,6 +636,7 @@ a page that stays on its host is the replica, and one on another a sign-in."
   (let* ((dir (file-name-as-directory (make-temp-file "moor" t)))
          (into (file-name-as-directory (expand-file-name "s" dir)))
          (org-moor-singlefile-browser "/opt/chrome")
+         (org-moor-singlefile-browser-idle nil)
          (org-moor-singlefile-profile (expand-file-name "profile" dir))
          (org-moor-signed-out-function #'org-moor-signed-out-by-host))
     (make-directory into)
@@ -647,22 +648,28 @@ a page that stays on its host is the replica, and one on another a sign-in."
       (let ((args (with-temp-buffer
                     (insert-file-contents (expand-file-name "args" dir))
                     (split-string (buffer-string) "\n" t))))
-        (should (equal (seq-take args 6)
+        (should (equal (butlast args)
                        (list "--browser-executable-path" "/opt/chrome"
                              "--browser-profile" org-moor-singlefile-profile
-                             "--browser-script" org-moor--location-script)))
-        (should (equal (seq-subseq args 6 9)
-                       '("--filename-conflict-action" "overwrite"
-                         "https://wiki.example.com/p")))))
+                             "--browser-arg=--disable-quic"
+                             "--browser-script" org-moor--location-script
+                             "--filename-conflict-action" "overwrite"
+                             "--browser-wait-until" "DOMContentLoaded"
+                             "--browser-wait-until-delay" "0"
+                             "--browser-script" org-moor--ready-script
+                             "https://wiki.example.com/p")))))
+    ;; Given arguments come last, to be taken over these.
     (let ((org-moor-singlefile-arguments '("--browser-wait-until" "InteractiveTime"))
+          (org-moor-singlefile-when-ready nil)
           (org-moor-singlefile-program
            (org-moor-test--fake-singlefile dir "https://wiki.example.com/p")))
       (org-moor-test--keep-by-singlefile "https://wiki.example.com/p" into)
       (should (equal (seq-subseq (with-temp-buffer
                                    (insert-file-contents (expand-file-name "args" dir))
                                    (split-string (buffer-string) "\n" t))
-                                 8 11)
-                     '("--browser-wait-until" "InteractiveTime" "https://wiki.example.com/p"))))
+                                 7 12)
+                     '("--filename-conflict-action" "overwrite"
+                       "--browser-wait-until" "InteractiveTime" "https://wiki.example.com/p"))))
     (delete-file (expand-file-name "page.html" into))
     (let ((org-moor-singlefile-program
            (org-moor-test--fake-singlefile dir "https://login.example.com/?r=wiki")))
@@ -680,12 +687,243 @@ a page that stays on its host is the replica, and one on another a sign-in."
     (with-temp-file file
       (insert "<head><meta name=org-moor-location content=https://a.example/p></head>"))
     (should (equal (org-moor-singlefile-location file) "https://a.example/p"))
+    (let ((coding-system-for-write 'utf-8))
+      (with-temp-file file
+        (insert "<head><meta name=\"org-moor-location\" content=\"https://a.example/資料?a=1&amp;b=2\"></head>")))
+    (should (equal (org-moor-singlefile-location file) "https://a.example/資料?a=1&b=2"))
     (with-temp-file file (insert "<head></head>"))
     (should-not (org-moor-singlefile-location file))
     (should-not (org-moor-signed-out-p "https://a.example/p" nil))
     (should-not (org-moor-signed-out-p "https://a.example/p" "https://a.example/login"))
     (should (org-moor-signed-out-p "https://a.example/p" "https://login.example/"))
     (delete-file file)))
+
+(defmacro org-moor-test--with-kept-browser (&rest body)
+  "Run BODY with a browser kept for single-file that is a pipe, answering.
+`browser' is it; `runs' has the server each page was saved in, latest first."
+  (declare (indent 0))
+  `(let* ((browser (make-pipe-process :name "org-moor-test-browser" :noquery t))
+          (org-moor--singlefile-server browser)
+          (org-moor--singlefile-server-url "http://127.0.0.1:9222")
+          (org-moor--singlefile-server-waiting nil)
+          (org-moor--singlefile-server-queue nil)
+          (org-moor--singlefile-server-busy nil)
+          (org-moor--signing-in nil)
+          (org-moor--singlefile-server-timer nil)
+          (org-moor-singlefile-browser "/opt/chrome")
+          (org-moor-singlefile-browser-idle 600)
+          (org-moor-signed-out-function #'org-moor-signed-out-by-host)
+          (runs nil))
+     (unwind-protect
+         (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/bin/single-file")))
+           ,@body)
+       (when (timerp org-moor--singlefile-server-timer)
+         (cancel-timer org-moor--singlefile-server-timer))
+       (when (process-live-p browser) (delete-process browser)))))
+
+(ert-deftest org-moor-test-singlefile-in-the-kept-browser ()
+  "A page is saved in the browser kept for single-file, which is quit once
+no page has been saved in it for a while."
+  (org-moor-test--with-kept-browser
+    (let ((got 'unset))
+      (cl-letf (((symbol-function 'org-moor--singlefile-run)
+                 (lambda (_url _file server done) (push server runs) (funcall done t)))
+                ((symbol-function 'org-moor-singlefile-location) #'ignore))
+        (org-moor-singlefile "https://wiki.example.com/p" "/s/p.html"
+                             (lambda (saved) (setq got saved))))
+      (should (eq got t))
+      (should (equal runs '("http://127.0.0.1:9222")))
+      (should (timerp org-moor--singlefile-server-timer))
+      ;; While a page is saved, the browser stays when its time comes.
+      (setq org-moor--singlefile-server-busy t)
+      (funcall (timer--function org-moor--singlefile-server-timer))
+      (should (process-live-p browser))
+      (setq org-moor--singlefile-server-busy nil)
+      (org-moor--singlefile-server-rest)
+      (funcall (timer--function org-moor--singlefile-server-timer))
+      (should-not (process-live-p browser))
+      (should-not org-moor--singlefile-server)
+      (should-not org-moor--singlefile-server-url))))
+
+(ert-deftest org-moor-test-singlefile-one-page-at-a-time ()
+  "Pages given at once are saved in the kept browser one after another,
+in the order given; while the profile is open to sign in, they wait."
+  (org-moor-test--with-kept-browser
+    (let ((pending nil) (got nil))
+      (cl-letf (((symbol-function 'org-moor--singlefile-run)
+                 (lambda (url _file server done)
+                   (push (cons url server) runs)
+                   (push done pending)))
+                ((symbol-function 'org-moor-singlefile-location) #'ignore))
+        (dolist (u '("https://w.example/a" "https://w.example/b"))
+          (org-moor-singlefile u "/s/p.html" (lambda (s) (push (cons u s) got))))
+        (should (equal (mapcar #'car runs) '("https://w.example/a")))
+        (should (= (length org-moor--singlefile-server-queue) 1))
+        (setq org-moor--signing-in t)
+        (funcall (pop pending) t)
+        (should (equal got '(("https://w.example/a" . t))))
+        (should (equal (mapcar #'car runs) '("https://w.example/a")))
+        (org-moor--signed-in)
+        (should (equal (mapcar #'car runs) '("https://w.example/b" "https://w.example/a")))
+        (funcall (pop pending) t)
+        (should (equal (mapcar #'car got) '("https://w.example/b" "https://w.example/a")))
+        (should-not org-moor--singlefile-server-queue)
+        (should-not org-moor--singlefile-server-busy)))))
+
+(ert-deftest org-moor-test-singlefile-again-when-the-browser-went ()
+  "A page not saved because the kept browser went is saved once more, in
+the browser started again; one not saved while the browser stays is not
+tried again."
+  (org-moor-test--with-kept-browser
+    (let ((got 'unset))
+      (cl-letf (((symbol-function 'org-moor--singlefile-run)
+                 (lambda (_url _file server done)
+                   (push server runs)
+                   (when (process-live-p browser) (delete-process browser))
+                   (funcall done (equal server "http://127.0.0.1:9333"))))
+                ((symbol-function 'org-moor--singlefile-server)
+                 (lambda (then)
+                   (funcall then (if runs "http://127.0.0.1:9333" "http://127.0.0.1:9222"))))
+                ((symbol-function 'org-moor-singlefile-location) #'ignore))
+        (org-moor-singlefile "https://wiki.example.com/p" "/s/p.html"
+                             (lambda (saved) (setq got saved))))
+      (should (eq got t))
+      (should (equal runs '("http://127.0.0.1:9333" "http://127.0.0.1:9222")))))
+  ;; Gone twice, it is not tried a third time.
+  (org-moor-test--with-kept-browser
+    (let ((got 'unset))
+      (cl-letf (((symbol-function 'org-moor--singlefile-run)
+                 (lambda (_url _file server done)
+                   (push server runs)
+                   (funcall done nil)))
+                ((symbol-function 'org-moor--singlefile-server)
+                 (lambda (then)
+                   (when (process-live-p browser) (delete-process browser))
+                   (funcall then "http://127.0.0.1:9222"))))
+        (org-moor-singlefile "https://wiki.example.com/p" "/s/p.html"
+                             (lambda (saved) (setq got saved))))
+      (should-not got)
+      (should (= (length runs) 2))
+      (should-not org-moor--singlefile-server-queue)
+      (should-not org-moor--singlefile-server-busy)))
+  (org-moor-test--with-kept-browser
+    (let ((got 'unset))
+      (cl-letf (((symbol-function 'org-moor--singlefile-run)
+                 (lambda (_url _file server done) (push server runs) (funcall done nil))))
+        (org-moor-singlefile "https://wiki.example.com/p" "/s/p.html"
+                             (lambda (saved) (setq got saved))))
+      (should-not got)
+      (should (equal runs '("http://127.0.0.1:9222"))))))
+
+(ert-deftest org-moor-test-singlefile-kept-browser-starts ()
+  "The browser is started in the profile, with no window, and single-file
+is pointed at the port it writes."
+  (skip-unless (not (memq system-type '(windows-nt ms-dos))))
+  (let* ((dir (file-name-as-directory (make-temp-file "moor" t)))
+         (program (expand-file-name "chrome" dir))
+         (org-moor-singlefile-browser program)
+         (org-moor-singlefile-browser-idle 600)
+         (org-moor-singlefile-profile (expand-file-name "profile" dir))
+         (org-moor--singlefile-server nil)
+         (org-moor--singlefile-server-url nil)
+         (org-moor--singlefile-server-waiting nil)
+         (got 'unset))
+    (with-temp-file program
+      (insert "#!/bin/sh\n"
+              "for a in \"$@\"; do echo \"$a\"; done > " (shell-quote-argument (expand-file-name "args" dir)) "\n"
+              "printf '4321\\n/devtools/browser/x\\n' > "
+              (shell-quote-argument (expand-file-name "profile/DevToolsActivePort" dir)) "\n"
+              "exec sleep 30\n"))
+    (set-file-modes program #o755)
+    (unwind-protect
+        (progn
+          (org-moor--singlefile-server (lambda (url) (setq got url)))
+          (with-timeout (10 (error "the browser did not answer"))
+            (while (eq got 'unset) (accept-process-output nil 0.05)))
+          (should (equal got "http://127.0.0.1:4321"))
+          (let ((args (with-temp-buffer
+                        (insert-file-contents (expand-file-name "args" dir))
+                        (split-string (buffer-string) "\n" t))))
+            (should (equal (car args) (concat "--user-data-dir="
+                                              (directory-file-name org-moor-singlefile-profile))))
+            (should (member "--headless" args))
+            (should (member "--disable-quic" args))
+            (should-not (member "--no-sandbox" args))))
+      (org-moor--singlefile-server-stop)
+      (delete-directory dir t))
+    (should-not org-moor--singlefile-server)))
+
+(ert-deftest org-moor-test-profile-in-use ()
+  "A profile is in use while the browser its SingletonLock names runs."
+  (skip-unless (not (memq system-type '(windows-nt ms-dos))))
+  (let* ((dir (make-temp-file "moor" t))
+         (lock (expand-file-name "SingletonLock" dir)))
+    (unwind-protect
+        (progn
+          (should-not (org-moor--profile-in-use-p dir))
+          (make-symbolic-link (format "host-%d" (emacs-pid)) lock)
+          (should (org-moor--profile-in-use-p dir))
+          (delete-file lock)
+          ;; Left behind by a browser that is gone.
+          (make-symbolic-link "host-99999999" lock)
+          (should-not (org-moor--profile-in-use-p dir)))
+      (delete-directory dir t))))
+
+(ert-deftest org-moor-test-singlefile-kept-browser-left-running ()
+  "With the profile open in a browser left running, none is started: pages
+are saved with a copy, and signing in is refused."
+  (let* ((dir (file-name-as-directory (make-temp-file "moor" t)))
+         (org-moor-singlefile-browser "/opt/chrome")
+         (org-moor-singlefile-browser-idle 600)
+         (org-moor-singlefile-profile (expand-file-name "profile" dir))
+         (org-moor--singlefile-server nil)
+         (org-moor--singlefile-server-url nil)
+         (org-moor--singlefile-server-waiting nil)
+         (org-moor--signing-in nil)
+         (started nil)
+         (got 'unset))
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-moor--profile-in-use-p) (lambda (_) t))
+                  ((symbol-function 'make-process)
+                   (lambda (&rest _) (setq started t) nil)))
+          (org-moor--singlefile-server (lambda (url) (setq got url)))
+          (should-not got)
+          (should-not started)
+          (should-error (org-moor-sign-in "https://wiki.example.com/p") :type 'user-error)
+          (should-not started)
+          (should-not org-moor--signing-in))
+      (delete-directory dir t))))
+
+(ert-deftest org-moor-test-singlefile-run-that-cannot-start ()
+  "A single-file that cannot be started is a page not saved.
+On Windows it is not started at all; elsewhere it is, and exits at once."
+  (let ((org-moor-singlefile-program "/no/such/single-file")
+        (got 'unset))
+    (org-moor--singlefile-run "https://wiki.example.com/p" "/s/p.html" nil
+                              (lambda (saved) (setq got saved)))
+    (with-timeout (10 (error "single-file was not given up"))
+      (while (eq got 'unset) (accept-process-output nil 0.05)))
+    (should-not got)))
+
+(ert-deftest org-moor-test-singlefile-run-is-stopped ()
+  "single-file is stopped once it has had its time, and its page is not kept."
+  (let* ((file (make-temp-file "moor" nil ".html"))
+         (org-moor-singlefile-timeout 1)
+         (org-moor-singlefile-program
+          (expand-file-name invocation-name invocation-directory))
+         (org-moor-singlefile-arguments nil)
+         (org-moor-singlefile-profile nil)
+         (got 'unset))
+    ;; Emacs stands in for single-file: it takes the arguments and waits.
+    (cl-letf (((symbol-function 'org-moor--singlefile-browser-args)
+               (lambda () (list "-Q" "--batch" "--eval" "(sleep-for 30)"))))
+      (let ((org-moor--location-script "--"))
+        (org-moor--singlefile-run "https://wiki.example.com/p" file nil
+                                  (lambda (saved) (setq got saved)))))
+    (with-timeout (15 (error "single-file was not stopped"))
+      (while (eq got 'unset) (accept-process-output nil 0.05)))
+    (should-not got)
+    (should-not (file-exists-p file))))
 
 (ert-deftest org-moor-test-front-signed-out ()
   "A page is one of the site while its entry still has single-file save it;
@@ -739,6 +977,7 @@ sources waiting for that host are offered to be kept."
            (other (org-moor-new-source "Other" "https://other.example.com/p" 'web))
            (org-moor-singlefile-profile (expand-file-name "profile" dir))
            (org-moor-singlefile-browser nil)
+           (org-moor--signing-in nil)
            (command nil) (kept nil))
       (org-moor-record-set waiting :signin "wiki.example.com")
       (org-moor-record-set other :signin "other.example.com")
@@ -759,6 +998,8 @@ sources waiting for that host are offered to be kept."
       (should (equal command (list "single-file" "--create-browser-profile"
                                    org-moor-singlefile-profile "https://wiki.example.com/p")))
       (should (equal kept '("Wiki")))
+      ;; Quit, the profile is free for pages again.
+      (should-not org-moor--signing-in)
       (should-not (file-exists-p (expand-file-name "Default/Cache" org-moor-singlefile-profile)))
       (should (file-exists-p (expand-file-name "Default/Network" org-moor-singlefile-profile)))
       ;; With the browser named, it is started as it is, its sandbox kept.
@@ -766,10 +1007,11 @@ sources waiting for that host are offered to be kept."
         (cl-letf (((symbol-function 'make-process)
                    (lambda (&rest args) (setq command (plist-get args :command)) nil)))
           (org-moor-sign-in "https://wiki.example.com/p")))
-      (should (equal command (list "/opt/chrome"
+      (should (equal command (list (expand-file-name "/opt/chrome")
                                    (concat "--user-data-dir="
                                            (directory-file-name org-moor-singlefile-profile))
                                    "--no-first-run" "--no-default-browser-check"
+                                   "--disable-quic"
                                    "https://wiki.example.com/p"))))))
 
 (ert-deftest org-moor-test-batch-command-by-the-server ()

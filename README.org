@@ -121,7 +121,18 @@ save is saved by it, into the source's directory.
 
 single-file drives Chrome or Chromium -- ~org-moor-singlefile-browser~,
 else the one it finds -- signed in by the profile
-~org-moor-singlefile-profile~, of which each page is saved with a copy.
+~org-moor-singlefile-profile~.  With ~org-moor-singlefile-browser~ named,
+that browser is started once, with no window, in the profile itself, and
+each page is saved in it, one at a time, rather than in a browser
+started for the page with a copy of the profile, which takes most of a
+page's time; it is quit after ~org-moor-singlefile-browser-idle~ seconds
+with no page.  One left running by an Emacs that was stopped, not quit,
+is said in the echo area, the pages saved with a copy meanwhile.  Without it, each page is saved with a copy.  A page is
+saved once it is ready -- its own requests answered, its document no
+longer changing -- by ~script/org-moor-ready.js~, see
+~org-moor-singlefile-when-ready~.  single-file is stopped after
+~org-moor-singlefile-timeout~ seconds, and the echo area says why a page
+was not saved.
 ~org-moor-sign-in~ opens that browser, with a window, at a URL, to sign in
 and quit; the profile keeps the sign-in.  When the page saved turns out
 to be a sign-in page -- on Windows, one the entry it was taken by does
