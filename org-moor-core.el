@@ -801,7 +801,9 @@ are named by it alone where `org-moor-place-alone-p' says so of that file."
      "or `No replica: ...' when the page could not be kept -- it needs a sign-in,\n"
      "or a browser -- which the user keeps later.  Cite such a source by its\n"
      "link all the same, but write nothing it says, and end by saying which\n"
-     "sources are still to be read.\n")))
+     "sources are still to be read.  `No replica yet' is a page still being\n"
+     "kept: the same command with moor:ID in place of FILE-OR-URL waits for it\n"
+     "again, without taking it a second time.\n")))
 
 (add-hook 'org-dock-link-file-functions #'org-moor-link-file)
 (add-hook 'org-dock-request-functions #'org-moor-request-text 10)

@@ -149,8 +149,19 @@ fetched as you would fetch it, and waits for the replica, asking every
 second, while that Emacs goes on; nothing is opened in front of you for
 it: a page single-file saves is saved unseen, and a file only a download
 in the browser keeps has its origin alone, for ~org-moor-keep-replica~
-when it suits you.  Otherwise, or when that Emacs cannot be reached, a
-batch Emacs takes it, and fetches as nobody.
+when it suits you.  What is said of it goes to ~*Messages*~ alone, not
+over what you are doing, and a page single-file saves for an agent waits
+behind any you take yourself.  The command waits less than the two
+minutes an agent's shell gives a command; a page still being kept then
+is waited for again by the same command with ~moor:ID~ in place of the
+file or URL, and a URL already being kept is not taken a second time, so
+that agents working at once take each page once.  Otherwise, or when
+that Emacs cannot be reached, a batch Emacs takes it, and fetches as
+nobody.
+
+A source is not taken to a heading out in a copy that an agent is
+writing, whose buffer is read-only meanwhile: nothing is made, and the
+echo area says why.
 
 Following a link opens the source's replica as a ~file:~ link to it would
 be opened: as ~org-file-apps~ says, in Emacs with ~C-u~, and in the

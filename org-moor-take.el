@@ -245,12 +245,31 @@ record of what it took there.  At point, the link goes in the text, see
 `org-moor-insert-link-here'; elsewhere on a line of its own.  TARGET is
 let go of, whatever happens."
   (unwind-protect
-      (let ((here (org-moor--here-p target))
-            (link (org-moor-link (funcall take (org-moor--target-sources target)))))
-        (if here
-            (org-moor-insert-link-here link)
-          (org-moor-insert-link-line target title link)))
+      (let ((here (org-moor--here-p target)))
+        (org-moor--check-writable target here)
+        (let ((link (org-moor-link (funcall take (org-moor--target-sources target)))))
+          (if here
+              (org-moor-insert-link-here link)
+            (org-moor-insert-link-line target title link))))
     (org-moor--release target)))
+
+(defun org-moor--check-writable (target here)
+  "Signal when the link to be written at TARGET cannot be, before a source is made.
+HERE is non-nil when it goes at point.  A heading taken out by org-dock
+is written in its copy, which is read-only while an agent writes it:
+taken then, the source would be made and its link written nowhere."
+  (when (markerp target)
+    (let ((buffer (if here
+                      (current-buffer)
+                    (with-current-buffer (marker-buffer target)
+                      (or (org-dock-copy-of target) (current-buffer))))))
+      (with-current-buffer buffer
+        (when buffer-read-only
+          (user-error "org-moor: %s is read-only%s; nothing taken"
+                      (buffer-name)
+                      (if-let* ((who (and buffer-file-name (org-dock-busy buffer-file-name))))
+                          (format " while %s writes it" who)
+                        "")))))))
 
 ;;;; The clipboard
 
@@ -464,6 +483,20 @@ Interactively FILE is the one at point in Dired, else read.  One
       (dired-remove-file file))
     (message "Took %s (%s)" name (if move "moved" "copied"))
     link))
+
+;;;; Taken for an agent
+
+(defvar org-moor--agent nil
+  "Non-nil while a source is taken for an agent, in the Emacs the user works in.
+What is said of its replica then goes to *Messages* alone, not over what
+the user is doing, since the agent is told it; and a page single-file
+saves for it waits behind the user's.  Bound by `org-moor-agent-take',
+and again by what is called back for it later.")
+
+(defun org-moor--say (format-string &rest args)
+  "Say FORMAT-STRING with ARGS as `message' does; in *Messages* alone for an agent."
+  (let ((inhibit-message (or inhibit-message org-moor--agent)))
+    (apply #'message format-string args)))
 
 ;;;; Web pages
 
@@ -947,8 +980,10 @@ Not single-file's --no-sandbox: started here, the browser keeps it.")
   "The timer quitting the browser kept for single-file, or nil.")
 
 (defvar org-moor--singlefile-server-queue nil
-  "Pages waiting for the browser kept for single-file, each (URL FILE DONE AGAIN).
-AGAIN is non-nil for a page being saved a second time.")
+  "Pages waiting for the browser kept for single-file.
+Each is (URL FILE DONE AGAIN AGENT): AGAIN is non-nil for a page being
+saved a second time, and AGENT for one saved for an agent, see
+`org-moor--agent'.")
 
 (defvar org-moor--singlefile-server-busy nil
   "Non-nil while single-file saves a page in the browser kept for it.")
@@ -1112,25 +1147,38 @@ Unless it is saving one, or the profile is open to sign in."
       (setq org-moor--singlefile-server-busy t)
       (org-moor--singlefile-server
        (lambda (server)
-         (org-moor--singlefile-run
-          (nth 0 page) (nth 1 page) server
-          (apply-partially #'org-moor--singlefile-server-saved
-                           page server org-moor--singlefile-server)))))))
+         (let ((org-moor--agent (nth 4 page)))
+           (org-moor--singlefile-run
+            (nth 0 page) (nth 1 page) server
+            (apply-partially #'org-moor--singlefile-server-saved
+                             page server org-moor--singlefile-server))))))))
+
+(defun org-moor--singlefile-server-enqueue (page)
+  "Queue PAGE, of the form of `org-moor--singlefile-server-queue'.
+The user's pages are saved before an agent's: after the user's queued,
+before the first of an agent's; an agent's after every other."
+  (let* ((queue org-moor--singlefile-server-queue)
+         (before (if (nth 4 page)
+                     queue
+                   (seq-take-while (lambda (p) (not (nth 4 p))) queue))))
+    (setq org-moor--singlefile-server-queue
+          (append before (list page) (nthcdr (length before) queue)))))
 
 (defun org-moor--singlefile-server-saved (page server browser saved)
   "Finish PAGE, of the queue, which single-file SAVED or did not.
 In the browser at SERVER, the process BROWSER, or, nil, in one of its own.
 A page not saved because the browser went is queued first, once, for
 the browser started again; else its DONE is called.  Then the next."
-  (pcase-let ((`(,url ,file ,done ,again) page))
+  (pcase-let ((`(,url ,file ,done ,again ,agent) page))
     (setq org-moor--singlefile-server-busy nil)
     (unwind-protect
-        (if (and (not saved) server (not again) (not (process-live-p browser)))
-            (progn
-              (message "org-moor: the browser for single-file went; %s is saved again" url)
-              (push (list url file done t) org-moor--singlefile-server-queue))
-          (org-moor--singlefile-server-rest)
-          (funcall done saved))
+        (let ((org-moor--agent agent))
+          (if (and (not saved) server (not again) (not (process-live-p browser)))
+              (progn
+                (org-moor--say "org-moor: the browser for single-file went; %s is saved again" url)
+                (push (list url file done t agent) org-moor--singlefile-server-queue))
+            (org-moor--singlefile-server-rest)
+            (funcall done saved)))
       (org-moor--singlefile-server-next))))
 
 ;;;;; Saving a page
@@ -1172,13 +1220,15 @@ is given non-nil when FILE has the page; when not, the echo area says
 why.  single-file is stopped after `org-moor-singlefile-timeout'."
   (let* ((out (generate-new-buffer " *org-moor-singlefile*"))
          (timer nil)
+         (agent org-moor--agent)
          (failed
           (lambda (why)
             (ignore-errors (delete-file file))
-            (message "%s" (propertize
-                           (format "org-moor: single-file did not save %s%s"
-                                   url (if why (concat ": " why) ""))
-                           'face 'warning))))
+            (let ((org-moor--agent agent))
+              (org-moor--say "%s" (propertize
+                                   (format "org-moor: single-file did not save %s%s"
+                                           url (if why (concat ": " why) ""))
+                                   'face 'warning)))))
          (proc
           (condition-case err
               (make-process
@@ -1193,7 +1243,8 @@ why.  single-file is stopped after `org-moor-singlefile-timeout'."
                (lambda (proc _event)
                  (unless (process-live-p proc)
                    (when timer (cancel-timer timer))
-                   (let ((saved (and (zerop (process-exit-status proc))
+                   (let ((org-moor--agent agent)
+                         (saved (and (zerop (process-exit-status proc))
                                      (file-exists-p file)
                                      (> (file-attribute-size (file-attributes file)) 0))))
                      (unless saved
@@ -1220,16 +1271,18 @@ As `org-moor-singlefile' says: a page saved is told from a sign-in page
 by `org-moor-signed-out-function'."
   (if (not saved)
       (funcall done nil)
-    (let ((location (org-moor-singlefile-location file)))
+    (let ((location (org-moor-singlefile-location file))
+          (agent org-moor--agent))
       (funcall org-moor-signed-out-function
                url location
                (lambda (out)
-                 (if (not out)
-                     (funcall done t)
-                   (message "org-moor: %s went to %s, taken for a sign-in page"
-                            url location)
-                   (delete-file file)
-                   (funcall done 'signin)))))))
+                 (let ((org-moor--agent agent))
+                   (if (not out)
+                       (funcall done t)
+                     (org-moor--say "org-moor: %s went to %s, taken for a sign-in page"
+                                    url location)
+                     (delete-file file)
+                     (funcall done 'signin))))))))
 
 (defun org-moor-singlefile (url file done)
   "Save the page at URL to FILE by single-file, then call DONE.
@@ -1237,7 +1290,8 @@ With t when it is saved, `signin' when a sign-in page was shown in its
 place -- see `org-moor-signed-out-function' -- and nil when it failed.
 In the browser kept for it, as `org-moor-singlefile-browser-idle' says,
 one page at a time: a page whose tab is not in front is not drawn, and
-waits there all the same, the time it is given running out.  Should
+waits there all the same, the time it is given running out.  The user's
+pages go before those of an agent, see `org-moor--agent'.  Should
 that browser be gone when the page is not saved, it is saved once more,
 first, in the browser started again.  Nothing is left in FILE but the
 page."
@@ -1252,8 +1306,7 @@ page."
      ((not (org-moor--singlefile-server-p))
       (org-moor--singlefile-run url file nil checked))
      (t
-      (setq org-moor--singlefile-server-queue
-            (append org-moor--singlefile-server-queue (list (list url file checked nil))))
+      (org-moor--singlefile-server-enqueue (list url file checked nil org-moor--agent))
       (org-moor--singlefile-server-next)))))
 
 (defun org-moor-singlefile-keep (url dir done)
@@ -1458,16 +1511,18 @@ sign-in page.  With UNSEEN, no browser is opened in front of anyone: a
 replica only a download would keep is left, and DONE given `later'."
   (if (not org-moor-browser-download-function)
       (org-moor-fetch url dir done)
-    (funcall org-moor-browser-download-function url
-             (lambda (how)
-               (cond
-                ((not how) (org-moor-fetch url dir done))
-                ((eq how 'singlefile) (org-moor-singlefile-keep url dir done))
-                (unseen (funcall done 'later))
-                (t (setq org-moor--browser-queue
-                         (append org-moor--browser-queue
-                                 (list (list (nth 0 how) (nth 1 how) url dir done))))
-                   (org-moor--browser-next)))))))
+    (let ((agent org-moor--agent))
+      (funcall org-moor-browser-download-function url
+               (lambda (how)
+                 (let ((org-moor--agent agent))
+                   (cond
+                    ((not how) (org-moor-fetch url dir done))
+                    ((eq how 'singlefile) (org-moor-singlefile-keep url dir done))
+                    (unseen (funcall done 'later))
+                    (t (setq org-moor--browser-queue
+                             (append org-moor--browser-queue
+                                     (list (list (nth 0 how) (nth 1 how) url dir done))))
+                       (org-moor--browser-next)))))))))
 
 (defun org-moor--clipboard-url ()
   "Return the clipboard's text when it is a URL, or nil."
@@ -1475,7 +1530,7 @@ replica only a download would keep is left, and DONE given `later'."
     (and text (string-match-p "\\`https?://[^ \t\n]+\\'" text) text)))
 
 (defvar org-moor--keeping (make-hash-table :test #'equal)
-  "The ids of the sources whose replicas are being kept, in the background.")
+  "The sources whose replicas are being kept, in the background: records by id.")
 
 (defun org-moor-fetch-replica (record &optional keep then)
   "Keep a replica of the source RECORD from its origin, a URL, in the background.
@@ -1487,33 +1542,35 @@ page has the page's host as its :signin, for `org-moor-sign-in'.
 THEN, when given, is called once it is kept, or is not."
   (let ((title (plist-get record :title))
         (url (plist-get record :origin))
-        (id (plist-get record :id)))
-    (puthash id t org-moor--keeping)
+        (id (plist-get record :id))
+        (agent org-moor--agent))
+    (puthash id record org-moor--keeping)
     (funcall (or keep #'org-moor-browser-or-fetch) url (plist-get record :dir)
              (lambda (file)
                (unwind-protect
-                   (pcase file
-                     ('signin
-                      (org-moor-record-set record :signin (url-host (url-generic-parse-url url)))
-                      (message "%s" (propertize
-                                     (format "org-moor: %s was a sign-in page; kept only its URL -- sign in with M-x org-moor-sign-in"
-                                             title)
-                                     'face 'warning)))
-                     ('later
-                      (message "%s" (propertize
-                                     (format "org-moor: %s is for the browser to keep; kept only its URL -- keep it with M-x org-moor-keep-replica"
-                                             title)
-                                     'face 'warning)))
-                     ((pred stringp)
-                      (org-moor-record-set record :file file)
-                      (when (plist-get record :signin)
-                        (org-moor-record-set record :signin nil))
-                      (message "Kept %s" title))
-                     (_
-                      (message "%s" (propertize
-                                     (format "org-moor: no replica of %s; kept only its URL -- download it and give it with M-x org-moor-set-replica"
-                                             title)
-                                     'face 'warning))))
+                   (let ((org-moor--agent agent))
+                     (pcase file
+                       ('signin
+                        (org-moor-record-set record :signin (url-host (url-generic-parse-url url)))
+                        (org-moor--say "%s" (propertize
+                                             (format "org-moor: %s was a sign-in page; kept only its URL -- sign in with M-x org-moor-sign-in"
+                                                     title)
+                                             'face 'warning)))
+                       ('later
+                        (org-moor--say "%s" (propertize
+                                             (format "org-moor: %s is for the browser to keep; kept only its URL -- keep it with M-x org-moor-keep-replica"
+                                                     title)
+                                             'face 'warning)))
+                       ((pred stringp)
+                        (org-moor-record-set record :file file)
+                        (when (plist-get record :signin)
+                          (org-moor-record-set record :signin nil))
+                        (org-moor--say "Kept %s" title))
+                       (_
+                        (org-moor--say "%s" (propertize
+                                             (format "org-moor: no replica of %s; kept only its URL -- download it and give it with M-x org-moor-set-replica"
+                                                     title)
+                                             'face 'warning)))))
                  (remhash id org-moor--keeping)
                  (when then (funcall then)))))))
 
@@ -1600,8 +1657,11 @@ that is not ASCII would arrive as another name."
       (error (signal 'file-error (list "Cannot reach Emacs" file
                                        (error-message-string err)))))))
 
-(defcustom org-moor-agent-timeout 180
-  "Seconds `org-moor-batch-take' waits for a replica being kept."
+(defcustom org-moor-agent-timeout 100
+  "Seconds `org-moor-batch-take' waits for a replica being kept.
+Less than the two minutes after which an agent's shell -- Claude Code's,
+say -- stops a command: stopped, the agent would take the source again.
+A source still being kept is waited for once more by its id."
   :type 'integer
   :group 'org-moor)
 
@@ -1616,7 +1676,8 @@ SOURCES is the sources directory; a file is copied, never moved, and
 titled by its name unless TITLE is given.  What is printed is a link to
 the source named by its title, [[moor:ID][TITLE]], and on the next line
 the replica to read, or why there is none, as `org-moor-agent-state'
-tells it.
+tells it.  In place of FILE-OR-URL, moor:ID takes nothing: it waits once
+more for the replica of source ID, still being kept when it was taken.
 
 With --server, the Emacs whose server FILE is takes it, by
 `org-moor-agent-take', so that a URL is fetched as the user would fetch
@@ -1631,40 +1692,69 @@ Emacs cannot be reached, a URL is fetched here, as nobody."
                                         (error "org-moor: no sources directory"))))
          (what (or (pop command-line-args-left)
                    (error "org-moor: no file or URL to take")))
-         (what (if (string-match-p "\\`https?://" what) what (expand-file-name what)))
+         (again (and (string-match "\\`moor:\\([^]:\n]+\\)\\'" what)
+                     (match-string 1 what)))
+         (what (if (or again (string-match-p "\\`https?://" what)) what (expand-file-name what)))
          (title (pop command-line-args-left))
-         (link (and server
-                    (condition-case err
-                        (or (org-moor--ask-server
-                             server `(org-moor-agent-take ,sources ,what ,title))
-                            (error "org-moor: Emacs did not take %s" what))
-                      (file-error
-                       (message "org-moor: %s; taken here" (error-message-string err))
-                       nil))))
+         (link (cond
+                (again (org-moor-link (or (org-moor-record again sources)
+                                          (error "org-moor: no source %s in %s" again sources))))
+                (server
+                 (condition-case err
+                     (or (org-moor--ask-server
+                          server `(org-moor-agent-take ,sources ,what ,title))
+                         (error "org-moor: Emacs did not take %s" what))
+                   (file-error
+                    (message "org-moor: %s; taken here" (error-message-string err))
+                    nil)))))
+         (id (and link (string-match org-moor--link-re link) (match-string 1 link)))
          (state
           (if link
-              (let ((id (and (string-match org-moor--link-re link)
-                             (match-string 1 link)))
-                    (deadline (+ (float-time) org-moor-agent-timeout))
-                    (state nil))
-                (while (progn (setq state (org-moor--ask-server
-                                           server `(org-moor-agent-state ,sources ,id)))
-                              (and (eq (car state) 'pending)
-                                   (< (float-time) deadline)))
-                  (sleep-for 1))
-                state)
+              (org-moor--batch-wait server sources id)
             (let* ((org-moor-browser-download-function nil)
                    (record (org-moor--take-what what sources title t)))
-              (setq link (org-moor-link record))
-              (org-moor-agent-state sources (plist-get record :id))))))
+              (setq link (org-moor-link record)
+                    id (plist-get record :id))
+              (org-moor-agent-state sources id)))))
     ;; In UTF-8, as an agent reads it, rather than the system's code page.
     (let ((coding-system-for-write 'utf-8))
-      (princ (concat link "\n" (org-moor-agent-state-line state) "\n")))))
+      (princ (concat link "\n" (org-moor-agent-state-line state id) "\n")))))
+
+(defun org-moor--batch-wait (server sources id)
+  "Return what source ID in SOURCES has, once its replica is no longer pending.
+Asked every second of the Emacs whose server is SERVER, for
+`org-moor-agent-timeout' seconds at most; read here when SERVER is nil
+or cannot be reached, where nothing is kept meanwhile."
+  (let ((deadline (+ (float-time) org-moor-agent-timeout))
+        (state nil))
+    (while (progn (setq state
+                        (or (and server
+                                 (condition-case nil
+                                     (org-moor--ask-server
+                                      server `(org-moor-agent-state ,sources ,id))
+                                   (file-error (setq server nil))))
+                            (org-moor-agent-state sources id)))
+                  (and (eq (car state) 'pending)
+                       (< (float-time) deadline)))
+      (sleep-for 1))
+    state))
 
 (defun org-moor--unseen-keep (url dir done)
   "Keep URL's replica in DIR as `org-moor-browser-or-fetch' does, unseen.
 No browser is opened in front of anyone; see its UNSEEN."
   (org-moor-browser-or-fetch url dir done t))
+
+(defun org-moor--keeping-origin (sources url)
+  "Return the source in SOURCES whose replica of URL is being kept, or nil."
+  (let ((sources (file-name-as-directory (expand-file-name sources)))
+        (found nil))
+    (maphash (lambda (_id record)
+               (when (and (not found)
+                          (equal (plist-get record :origin) url)
+                          (file-in-directory-p (plist-get record :dir) sources))
+                 (setq found record)))
+             org-moor--keeping)
+    found))
 
 (defun org-moor-agent-take (sources what &optional title)
   "Take WHAT, a file or a URL, into SOURCES, and return a link to it.
@@ -1672,9 +1762,15 @@ For `org-moor-batch-take' --server, in the Emacs the user works in: a
 URL's replica is kept as a URL taken here is, but by nothing that comes in
 front of the user -- one only a download in the browser would keep has its
 origin alone, for `org-moor-keep-replica' -- and after the link is
-returned, so that this Emacs goes on meanwhile.  The link is
-[[moor:ID][TITLE]]."
-  (org-moor-link (org-moor--take-what what sources title nil #'org-moor--unseen-keep)))
+returned, so that this Emacs goes on meanwhile.  A URL whose replica is
+being kept in SOURCES already, for another agent or this one asking
+again, is that source.  See `org-moor--agent' for what the user is
+spared of it.  The link is [[moor:ID][TITLE]]."
+  (let ((org-moor--agent t))
+    (org-moor-link
+     (or (and (string-match-p "\\`https?://" what)
+              (org-moor--keeping-origin sources (org-moor-url-unwrap what)))
+         (org-moor--take-what what sources title nil #'org-moor--unseen-keep)))))
 
 (defun org-moor-agent-state (sources id)
   "Return what source ID in SOURCES has, for an agent waiting on it.
@@ -1688,13 +1784,14 @@ has only where it came from."
           ((plist-get record :signin) (list 'signin (plist-get record :signin)))
           (t (list 'origin (plist-get record :origin))))))
 
-(defun org-moor-agent-state-line (state)
-  "Return the line telling an agent what STATE, of `org-moor-agent-state', is."
+(defun org-moor-agent-state-line (state &optional id)
+  "Return the line telling an agent what STATE, of `org-moor-agent-state', is.
+ID is the source's, for waiting on it again."
   (pcase state
     (`(kept ,replica) (concat "Replica: " replica))
     (`(pending)
-     (format "No replica yet: it is still being kept after %d seconds; do not guess what it says."
-             org-moor-agent-timeout))
+     (format "No replica yet: it is still being kept after %d seconds; run the command again with moor:%s in place of the file or URL to wait for it once more, and do not guess what it says."
+             org-moor-agent-timeout (or id "ID")))
     (`(signin ,host)
      (format "No replica: %s showed a sign-in page, which the user signs in to later; do not guess what it says."
              host))

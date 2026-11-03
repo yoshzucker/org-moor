@@ -1145,3 +1145,106 @@ have been mangled.  Sources alone may be made, in a project's first take."
     (should-error (org-moor-agent-take none "https://x.com/p" "Page"))
     (should-not (file-exists-p none))
     (delete-directory dir t)))
+
+(ert-deftest org-moor-test-agent-take-says-nothing-over-the-user ()
+  "What is said of a source an agent took goes to *Messages* alone, also
+when it is said after the agent was answered; the user's own is shown."
+  (org-moor-test--with-notes ""
+    (let ((said nil) (later nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (push (cons (apply #'format format args) inhibit-message) said))))
+        (let ((org-moor--agent t))
+          (org-moor-fetch-replica (org-moor-new-source "Agent's" "https://x.com/a" 'web)
+                                  (lambda (_url _dir done) (setq later done))))
+        (funcall later nil)
+        (org-moor-fetch-replica (org-moor-new-source "Mine" "https://x.com/b" 'web)
+                                (lambda (_url _dir done) (funcall done nil))))
+      (should (equal (mapcar #'cdr said) '(nil t)))
+      (should (string-search "Agent's" (car (nth 1 said)))))))
+
+(ert-deftest org-moor-test-singlefile-the-users-pages-first ()
+  "A page the user takes is saved before the agents' pages queued, after
+the user's own; an agent's after every other."
+  (org-moor-test--with-kept-browser
+    (let ((pending nil))
+      (cl-letf (((symbol-function 'org-moor--singlefile-run)
+                 (lambda (url _file _server done)
+                   (push url runs)
+                   (push done pending)))
+                ((symbol-function 'org-moor-singlefile-location) #'ignore))
+        (let ((org-moor--agent t))
+          (dolist (u '("https://w.example/a1" "https://w.example/a2"))
+            (org-moor-singlefile u "/s/p.html" #'ignore)))
+        (dolist (u '("https://w.example/u1" "https://w.example/u2"))
+          (org-moor-singlefile u "/s/p.html" #'ignore))
+        (let ((org-moor--agent t))
+          (org-moor-singlefile "https://w.example/a3" "/s/p.html" #'ignore))
+        (while pending (funcall (pop pending) t))
+        (should (equal (reverse runs)
+                       '("https://w.example/a1" "https://w.example/u1" "https://w.example/u2"
+                         "https://w.example/a2" "https://w.example/a3")))))))
+
+(ert-deftest org-moor-test-agent-take-a-url-being-kept-once ()
+  "A URL whose replica is being kept in the sources is that source, for
+another agent or one asking again; elsewhere, or once kept, a new one."
+  (let* ((dir (make-temp-file "moor" t))
+         (other (make-temp-file "moor" t))
+         (org-moor--keeping (make-hash-table :test #'equal))
+         (done nil))
+    (cl-letf (((symbol-function 'org-moor--unseen-keep)
+               (lambda (_url _dir d) (push d done))))
+      (let ((first (org-moor-agent-take dir "https://x.com/p" "Page")))
+        (should (equal (org-moor-agent-take dir "https://x.com/p") first))
+        (should-not (equal (org-moor-agent-take other "https://x.com/p") first))
+        (should (= (length done) 2))
+        (dolist (d done) (funcall d nil))
+        (should-not (equal (org-moor-agent-take dir "https://x.com/p") first))))
+    (delete-directory dir t)
+    (delete-directory other t)))
+
+(ert-deftest org-moor-test-batch-take-waits-again-by-id ()
+  "moor:ID takes nothing, and waits for that source once more; still
+pending, the line says how to wait again."
+  (org-moor-test--with-notes ""
+    (let* ((record (org-moor-new-source "Wiki" "https://w.example/p" 'web))
+           (id (plist-get record :id))
+           (sources org-moor-sources-directory)
+           (asked nil)
+           (states (list '(pending) '(signin "login.example"))))
+      (cl-letf (((symbol-function 'org-moor--ask-server)
+                 (lambda (_server form) (push form asked) (pop states)))
+                ((symbol-function 'sleep-for) #'ignore))
+        (let ((command-line-args-left (list "--server=/run/s" sources (concat "moor:" id))))
+          (should (equal (with-output-to-string (org-moor-batch-take))
+                         (format "[[moor:%s][Wiki]]\nNo replica: login.example showed a sign-in page, which the user signs in to later; do not guess what it says.\n"
+                                 id))))
+        (should (equal (mapcar #'car asked) '(org-moor-agent-state org-moor-agent-state))))
+      (should (string-search (concat "with moor:" id " in place")
+                             (org-moor-agent-state-line '(pending) id)))
+      ;; With no Emacs to ask, it is read here.
+      (let ((command-line-args-left (list sources (concat "moor:" id))))
+        (should (string-search "No replica: only where"
+                               (with-output-to-string (org-moor-batch-take)))))
+      (let ((command-line-args-left (list sources "moor:nosuch")))
+        (should-error (org-moor-batch-take))))))
+
+(ert-deftest org-moor-test-take-to-a-copy-being-written ()
+  "A heading out in a copy an agent is writing takes nothing: no source
+is made, and why is said."
+  (org-moor-test--with-notes "* Notes\nText\n"
+    (let ((org-dock--busy nil)
+          (taken nil)
+          (copy (org-dock-heading (point) :display nil)))
+      (org-dock-set-busy (buffer-file-name copy) "Claude")
+      (let ((err (should-error (org-moor--take-at (point-marker) "T"
+                                                  (lambda (_) (setq taken t)))
+                               :type 'user-error)))
+        (should (string-search "while Claude writes it" (cadr err))))
+      (should-not taken)
+      (org-dock-set-busy (buffer-file-name copy) nil)
+      (should (org-moor--take-at (point-marker) "T"
+                                 (lambda (sources)
+                                   (setq taken t)
+                                   (org-moor-new-source "T" nil 'file sources))))
+      (should taken))))
