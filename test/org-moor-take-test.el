@@ -747,7 +747,17 @@ sources waiting for that host are offered to be kept."
         (org-moor-sign-in "https://wiki.example.com/p"))
       (should (equal command (list "single-file" "--create-browser-profile"
                                    org-moor-singlefile-profile "https://wiki.example.com/p")))
-      (should (equal kept '("Wiki"))))))
+      (should (equal kept '("Wiki")))
+      ;; With the browser named, it is started as it is, its sandbox kept.
+      (let ((org-moor-singlefile-browser "/opt/chrome"))
+        (cl-letf (((symbol-function 'make-process)
+                   (lambda (&rest args) (setq command (plist-get args :command)) nil)))
+          (org-moor-sign-in "https://wiki.example.com/p")))
+      (should (equal command (list "/opt/chrome"
+                                   (concat "--user-data-dir="
+                                           (directory-file-name org-moor-singlefile-profile))
+                                   "--no-first-run" "--no-default-browser-check"
+                                   "https://wiki.example.com/p"))))))
 
 (ert-deftest org-moor-test-batch-command-by-the-server ()
   "While the server runs, the command names it; the agent fills in the same."

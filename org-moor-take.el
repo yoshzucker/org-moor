@@ -864,13 +864,16 @@ Nothing is left in FILE but the page."
                                  (> (file-attribute-size (file-attributes file)) 0)))
                        (progn (ignore-errors (delete-file file))
                               (funcall done nil))
-                     (funcall org-moor-signed-out-function
-                              url (org-moor-singlefile-location file)
-                              (lambda (out)
-                                (if (not out)
-                                    (funcall done t)
-                                  (delete-file file)
-                                  (funcall done 'signin))))))))))
+                     (let ((location (org-moor-singlefile-location file)))
+                       (funcall org-moor-signed-out-function
+                                url location
+                                (lambda (out)
+                                  (if (not out)
+                                      (funcall done t)
+                                    (message "org-moor: %s went to %s, taken for a sign-in page"
+                                             url location)
+                                    (delete-file file)
+                                    (funcall done 'signin)))))))))))
 
 (defun org-moor-singlefile-keep (url dir done)
   "Keep a replica of the page at URL in DIR by single-file; call DONE.
@@ -898,7 +901,7 @@ by their host, the link at point's first."
          (urls (delete-dups
                 (delq nil (cons (and at (string-match-p "\\`https?://" at) at)
                                 (mapcar (lambda (r) (plist-get r :origin)) waiting))))))
-    (read-string "Sign in at: " (car urls) nil (cdr urls))))
+    (read-string "Sign in at URL: " (car urls) nil (cdr urls))))
 
 ;;;###autoload (autoload 'org-moor-sign-in "org-moor" nil t)
 (defun org-moor-sign-in (url)
@@ -907,11 +910,16 @@ The browser opens, with a window, in `org-moor-singlefile-profile';
 sign in there and quit it, and the profile keeps the sign-in.  Then the
 sources of this buffer's sources directory waiting for a sign-in to
 URL's host are offered to `org-moor-keep-replica'.  Interactively, the
-origin of the link at point, else of a source waiting for a sign-in."
+origin of the link at point, else of a source waiting for a sign-in.
+
+With `org-moor-singlefile-browser', the browser is started here, as it
+is, so that the window you sign in in keeps its sandbox, which
+single-file turns off in a browser it starts; else single-file starts it."
   (interactive (list (org-moor--sign-in-url)))
   (unless org-moor-singlefile-profile
     (user-error "org-moor: no org-moor-singlefile-profile to sign in"))
-  (unless (executable-find org-moor-singlefile-program)
+  (unless (or org-moor-singlefile-browser
+              (executable-find org-moor-singlefile-program))
     (user-error "org-moor: no %s" org-moor-singlefile-program))
   (let ((host (url-host (url-generic-parse-url url)))
         (sources (org-moor-sources)))
@@ -920,11 +928,17 @@ origin of the link at point, else of a source waiting for a sign-in."
      :buffer " *org-moor-sign-in*"
      :coding (cons 'utf-8 (org-moor-argument-coding))
      :noquery t
-     :command `(,org-moor-singlefile-program
-                ,@(org-moor--singlefile-browser-args)
-                "--create-browser-profile"
-                ,(expand-file-name org-moor-singlefile-profile)
-                ,(url-encode-url url))
+     :command
+     (if org-moor-singlefile-browser
+         (list (expand-file-name org-moor-singlefile-browser)
+               (concat "--user-data-dir="
+                       (directory-file-name (expand-file-name org-moor-singlefile-profile)))
+               "--no-first-run" "--no-default-browser-check"
+               (url-encode-url url))
+       `(,org-moor-singlefile-program
+         "--create-browser-profile"
+         ,(expand-file-name org-moor-singlefile-profile)
+         ,(url-encode-url url)))
      :sentinel
      (lambda (proc _event)
        (unless (process-live-p proc)
@@ -932,14 +946,17 @@ origin of the link at point, else of a source waiting for a sign-in."
                                     (org-moor-sources-in sources))))
            (cond
             ((not (zerop (process-exit-status proc)))
-             (message "%s" (propertize (format "org-moor: the sign-in to %s did not end well"
+             (message "%s" (propertize (format "org-moor: the browser for %s did not close well"
                                                host)
                                        'face 'warning)))
+            ;; Whether you signed in there is not known here: only that
+            ;; the browser was quit.
             ((and waiting
-                  (y-or-n-p (format "Signed in to %s; keep the %d replica%s waiting for it? "
+                  (y-or-n-p (format "Browser for %s closed; keep the %d replica%s waiting for it? "
                                     host (length waiting) (if (cdr waiting) "s" ""))))
              (org-moor-keep-replica waiting))
-            (t (message "Signed in to %s" host)))))))
+            (t (message "Browser for %s closed; the profile keeps what was signed in there"
+                        host)))))))
     (message "Sign in to %s in the window, then quit the browser" host)))
 
 (defun org-moor-front-download (url done)
