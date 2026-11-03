@@ -784,6 +784,39 @@ in nowhere.  It is a sign-in, so it is to be where only you can read it."
   :type '(choice (const :tag "None" nil) directory)
   :group 'org-moor)
 
+(defcustom org-moor-singlefile-arguments nil
+  "More arguments given single-file, before the URL.
+When to take a page as loaded, say: \='(\"--browser-wait-until\"
+\"InteractiveTime\") for a site whose page never stops fetching, which
+single-file otherwise waits on for --browser-load-max-time."
+  :type '(repeat string)
+  :group 'org-moor)
+
+(defcustom org-moor-singlefile-profile-caches
+  '("Default/Cache" "Default/Code Cache" "Default/GPUCache"
+    "Default/DawnGraphiteCache" "Default/DawnWebGPUCache"
+    "Default/Service Worker/CacheStorage" "Default/Service Worker/ScriptCache"
+    "GrShaderCache" "GraphiteDawnCache" "ShaderCache" "GPUPersistentCache"
+    "component_crx_cache" "extensions_crx_cache"
+    "optimization_guide_model_store")
+  "Directories of `org-moor-singlefile-profile' let go once signed in.
+Relative to the profile.  single-file copies the whole profile for each
+page it saves, and these are caches the browser fills again: what a
+sign-in is -- cookies, the key they are kept with, extensions -- is not
+among them.  Removed by `org-moor-sign-in' once the browser is quit."
+  :type '(repeat string)
+  :group 'org-moor)
+
+(defun org-moor--singlefile-profile-trim ()
+  "Remove `org-moor-singlefile-profile-caches' from the profile."
+  (let ((profile (expand-file-name org-moor-singlefile-profile)))
+    (dolist (cache org-moor-singlefile-profile-caches)
+      (let ((dir (expand-file-name cache profile)))
+        (when (and (file-directory-p dir) (file-in-directory-p dir profile))
+          (condition-case err
+              (delete-directory dir t)
+            (file-error (message "org-moor: %s left: %s" dir (error-message-string err)))))))))
+
 (defconst org-moor--location-script
   (expand-file-name "org-moor-location.js" org-moor-script-directory)
   "A script run in a page single-file saves, writing where the page is.
@@ -856,6 +889,7 @@ Nothing is left in FILE but the page."
                 "--browser-script" ,org-moor--location-script
                 ;; Else a file there already has the page saved beside it.
                 "--filename-conflict-action" "overwrite"
+                ,@org-moor-singlefile-arguments
                 ,(url-encode-url url) ,file)
      :sentinel (lambda (proc _event)
                  (unless (process-live-p proc)
@@ -907,7 +941,8 @@ by their host, the link at point's first."
 (defun org-moor-sign-in (url)
   "Sign in at URL in the browser single-file saves pages with.
 The browser opens, with a window, in `org-moor-singlefile-profile';
-sign in there and quit it, and the profile keeps the sign-in.  Then the
+sign in there and quit it, and the profile keeps the sign-in, its
+caches let go -- see `org-moor-singlefile-profile-caches'.  Then the
 sources of this buffer's sources directory waiting for a sign-in to
 URL's host are offered to `org-moor-keep-replica'.  Interactively, the
 origin of the link at point, else of a source waiting for a sign-in.
@@ -942,6 +977,7 @@ single-file turns off in a browser it starts; else single-file starts it."
      :sentinel
      (lambda (proc _event)
        (unless (process-live-p proc)
+         (org-moor--singlefile-profile-trim)
          (let ((waiting (seq-filter (lambda (r) (equal (plist-get r :signin) host))
                                     (org-moor-sources-in sources))))
            (cond

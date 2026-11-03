@@ -654,6 +654,15 @@ a page that stays on its host is the replica, and one on another a sign-in."
         (should (equal (seq-subseq args 6 9)
                        '("--filename-conflict-action" "overwrite"
                          "https://wiki.example.com/p")))))
+    (let ((org-moor-singlefile-arguments '("--browser-wait-until" "InteractiveTime"))
+          (org-moor-singlefile-program
+           (org-moor-test--fake-singlefile dir "https://wiki.example.com/p")))
+      (org-moor-test--keep-by-singlefile "https://wiki.example.com/p" into)
+      (should (equal (seq-subseq (with-temp-buffer
+                                   (insert-file-contents (expand-file-name "args" dir))
+                                   (split-string (buffer-string) "\n" t))
+                                 8 11)
+                     '("--browser-wait-until" "InteractiveTime" "https://wiki.example.com/p"))))
     (delete-file (expand-file-name "page.html" into))
     (let ((org-moor-singlefile-program
            (org-moor-test--fake-singlefile dir "https://login.example.com/?r=wiki")))
@@ -733,6 +742,8 @@ sources waiting for that host are offered to be kept."
            (command nil) (kept nil))
       (org-moor-record-set waiting :signin "wiki.example.com")
       (org-moor-record-set other :signin "other.example.com")
+      (make-directory (expand-file-name "Default/Cache" org-moor-singlefile-profile) t)
+      (make-directory (expand-file-name "Default/Network" org-moor-singlefile-profile) t)
       (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/bin/single-file"))
                 ((symbol-function 'make-process)
                  (lambda (&rest args)
@@ -748,6 +759,8 @@ sources waiting for that host are offered to be kept."
       (should (equal command (list "single-file" "--create-browser-profile"
                                    org-moor-singlefile-profile "https://wiki.example.com/p")))
       (should (equal kept '("Wiki")))
+      (should-not (file-exists-p (expand-file-name "Default/Cache" org-moor-singlefile-profile)))
+      (should (file-exists-p (expand-file-name "Default/Network" org-moor-singlefile-profile)))
       ;; With the browser named, it is started as it is, its sandbox kept.
       (let ((org-moor-singlefile-browser "/opt/chrome"))
         (cl-letf (((symbol-function 'make-process)
