@@ -312,7 +312,12 @@ is asked to download it."
                   "https://view.officeapps.live.com/op/view.aspx?src=https%3A%2F%2Fx.com%2F%E8%B3%87%E6%96%99.pptx&wdOrigin=BROWSELINK")
                  "https://x.com/資料.pptx"))
   (should (equal (org-moor-url-unwrap "https://x.com/share?url=https%3A%2F%2Fy.com%2Fpost")
-                 "https://x.com/share?url=https%3A%2F%2Fy.com%2Fpost")))
+                 "https://x.com/share?url=https%3A%2F%2Fy.com%2Fpost"))
+  (should (equal (org-moor-url-unwrap
+                  "https://x.com:8443/sites/a/Docs/Forms/AllItems.aspx?id=%2Fsites%2Fa%2FDocs%2F%E8%B3%87%E6%96%99.pdf&parent=%2Fsites%2Fa%2FDocs")
+                 "https://x.com:8443/sites/a/Docs/資料.pdf"))
+  (should (equal (org-moor-url-unwrap "https://x.com/login?next=%2Fhome")
+                 "https://x.com/login?next=%2Fhome")))
 
 (ert-deftest org-moor-test-disposition-name ()
   (should (equal (org-moor--disposition-name "attachment; filename=\"a b.pdf\"") "a b.pdf"))
@@ -967,7 +972,83 @@ the URL asked for itself is not asked about again."
               ((symbol-function 'org-moor-take-url)
                (lambda (_url _title _pick k) (setq keep k))))
       (org-moor-protocol '(:url "https://wiki.example.com/p" :keep "singlefile"))
-      (should (eq keep #'org-moor-singlefile-keep)))))
+      (should (eq keep #'org-moor--singlefile-or-fetch)))))
+
+(ert-deftest org-moor-test-singlefile-leaves-a-file-to-fetch ()
+  "A URL single-file would save that is spelled as a file is fetched as one."
+  (let ((fetched nil) (saved nil))
+    (cl-letf (((symbol-function 'org-moor-fetch)
+               (lambda (url _dir _done &optional file) (push (list url file) fetched)))
+              ((symbol-function 'org-moor-singlefile-keep)
+               (lambda (url _dir _done) (push url saved))))
+      (org-moor--singlefile-or-fetch "https://wiki.example.com/a/b.pdf" "/s" #'ignore)
+      (org-moor--singlefile-or-fetch "https://wiki.example.com/a/b.html" "/s" #'ignore)
+      (org-moor--singlefile-or-fetch "https://wiki.example.com/p" "/s" #'ignore))
+    (should (equal fetched '(("https://wiki.example.com/a/b.pdf" t))))
+    (should (equal saved '("https://wiki.example.com/p" "https://wiki.example.com/a/b.html")))))
+
+(ert-deftest org-moor-test-download-fetched-in-browser ()
+  "With the browser kept for single-file, a download is fetched by it, for
+an agent too, and no browser is opened."
+  (let ((opened nil) (fetched nil) (got nil)
+        (org-moor--browser-queue nil) (org-moor--browser-busy nil))
+    (cl-letf (((symbol-function 'browse-url) (lambda (u &rest _) (push u opened)))
+              ((symbol-function 'org-moor--browser-fetch-p) (lambda () t))
+              ((symbol-function 'org-moor-fetch)
+               (lambda (url _dir done &optional file)
+                 (push (list url file) fetched) (funcall done "a.pdf"))))
+      (let ((org-moor-browser-download-function
+             (lambda (_url done) (funcall done (list "https://files.example.com/get?id=1" "/dl")))))
+        (org-moor-browser-or-fetch "https://files.example.com/view?id=1" "/s"
+                                   (lambda (n) (push n got)))
+        (org-moor--unseen-keep "https://files.example.com/view?id=1" "/s"
+                               (lambda (n) (push n got)))))
+    (should-not opened)
+    (should (equal fetched (make-list 2 '("https://files.example.com/get?id=1" t))))
+    (should (equal got '("a.pdf" "a.pdf")))))
+
+(ert-deftest org-moor-test-fetch-in-browser ()
+  "What the browser fetches is kept as it says: a file under the name it was
+sent with; a page sent for a file is a sign-in page; a page is saved by
+single-file; a browser that cannot be started leaves it to be fetched here."
+  (let* ((dir (make-temp-file "moor" t))
+         (org-moor-snapshot-function nil)
+         (answer nil) (saved nil) (here nil) (got nil))
+    (cl-letf (((symbol-function 'org-moor--browser-fetch-p) (lambda () t))
+              ((symbol-function 'executable-find) #'identity)
+              ((symbol-function 'org-moor--browser-fetch)
+               (lambda (_url file then)
+                 (when (eq (car-safe answer) 'file)
+                   (with-temp-file file (insert "%PDF-1.4")))
+                 (funcall then answer)))
+              ((symbol-function 'org-moor-singlefile-keep)
+               (lambda (url _dir done) (push url saved) (funcall done "page.html")))
+              ((symbol-function 'org-moor--fetch-here)
+               (lambda (url _dir done &optional _file) (push url here) (funcall done nil))))
+      (setq answer '(file "200" "application/pdf" "attachment; filename=\"r.pdf\""))
+      (org-moor-fetch "https://x.com/get?id=1" dir (lambda (n) (push n got)) t)
+      (setq answer '(page "https://login.x.com/"))
+      (org-moor-fetch "https://x.com/get?id=1" dir (lambda (n) (push n got)) t)
+      (org-moor-fetch "https://x.com/p" dir (lambda (n) (push n got)))
+      (setq answer 'here)
+      (org-moor-fetch "https://x.com/q" dir (lambda (n) (push n got))))
+    (should (equal (reverse got) '("r.pdf" signin "page.html" nil)))
+    (should (equal saved '("https://x.com/p")))
+    (should (equal here '("https://x.com/q")))
+    (should (equal (directory-files dir nil "\\`[^.]") '("r.pdf")))
+    (delete-directory dir t)))
+
+(ert-deftest org-moor-test-browser-fetch-waits-for-sign-in ()
+  "A URL fetched while the profile is open to sign in is fetched once it is quit."
+  (let ((org-moor--signing-in t) (org-moor--browser-fetch-waiting nil)
+        (org-moor--singlefile-server-queue nil) (got nil))
+    (cl-letf (((symbol-function 'org-moor--singlefile-server)
+               (lambda (then) (funcall then nil))))
+      (org-moor--browser-fetch "https://x.com/a" "/f" (lambda (how) (push how got)))
+      (should-not got)
+      (org-moor--signed-in)
+      (should (equal got '(here)))
+      (should-not org-moor--browser-fetch-waiting))))
 
 (ert-deftest org-moor-test-sign-in ()
   "The browser is opened in the profile at the URL; once it is quit, the

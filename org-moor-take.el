@@ -610,14 +610,29 @@ That is the last part of its path, decoded, when its extension is one of
   (let ((name (org-moor--url-name url)))
     (and (org-moor--known-name-p name) name)))
 
+(defun org-moor--url-file-p (url)
+  "Non-nil when URL is spelled as a file that is not a page.
+As `org-moor-url-file-name' tells it: a PDF, a document."
+  (let ((name (org-moor-url-file-name url)))
+    (and name
+         (not (equal (org-moor-extension name)
+                     (cdr (assoc "text/html" org-moor-mime-extensions)))))))
+
 (defun org-moor-url-unwrap (url)
   "Return the URL of the file URL shows, when URL is a viewer of one.
 A viewer names what it shows in its query: a value there that is itself
-a URL spelled as a file, see `org-moor-url-file-name', is the one meant.
-Anything else is itself."
-  (let ((query (cdr (url-path-and-query (url-generic-parse-url url)))))
+a URL spelled as a file, see `org-moor-url-file-name', is the one meant;
+so is a path on URL's own host spelled as one, as a document library's
+viewer names its file.  Anything else is itself."
+  (let* ((parsed (url-generic-parse-url url))
+         (query (cdr (url-path-and-query parsed)))
+         (origin (concat (url-type parsed) "://" (url-host parsed)
+                         (if (url-portspec parsed) (format ":%d" (url-portspec parsed)) ""))))
     (or (seq-some (lambda (pair)
-                    (let ((inner (decode-coding-string (or (cadr pair) "") 'utf-8)))
+                    (let* ((inner (decode-coding-string (or (cadr pair) "") 'utf-8))
+                           (inner (if (string-match-p "\\`/[^/]" inner)
+                                      (concat origin inner)
+                                    inner)))
                       (and (string-match-p "\\`https?://" inner)
                            (org-moor-url-file-name inner)
                            inner)))
@@ -689,42 +704,81 @@ which tells neither."
       (org-moor--curl url file done)
     (funcall done (ignore-errors (url-copy-file url file t) t) nil nil)))
 
-(defun org-moor-fetch (url dir done)
+(defvar org-moor-singlefile-program)
+
+(defun org-moor-fetch (url dir done &optional file)
   "Keep a replica of URL in DIR, then call DONE with its name, or nil.
 What it is, is what it sends: a page is kept by
 `org-moor-snapshot-function', or else as its HTML; a file under the name
-`org-moor-replica-name' gives it.  A page sent for a URL spelled as a file
--- a sign-in page -- is not the file, and nothing is kept."
+`org-moor-replica-name' gives it.  With FILE non-nil a file is asked for,
+as it is by a URL spelled as one: a page sent in its place -- a sign-in
+page -- is not the file, and nothing is kept.
+
+With `org-moor-fetch-in-browser', the browser kept for single-file fetches
+it, signed in as it is: a page is then saved by
+`org-moor-singlefile-keep', and DONE is given `signin' for a page sent in
+place of a file, which `org-moor-sign-in' lets it fetch."
+  (if (not (org-moor--browser-fetch-p))
+      (org-moor--fetch-here url dir done file)
+    (let ((fetched (make-temp-file (expand-file-name ".fetch" dir))))
+      (org-moor--browser-fetch
+       url fetched
+       (lambda (got)
+         (pcase got
+           (`(file ,_status ,type ,disposition)
+            (org-moor--keep-fetched url dir fetched type disposition file done t))
+           (_
+            (ignore-errors (delete-file fetched))
+            (pcase got
+              ('here (org-moor--fetch-here url dir done file))
+              (`(page ,_location)
+               (cond ((or file (org-moor--url-file-p url)) (funcall done 'signin))
+                     ((executable-find org-moor-singlefile-program)
+                      (org-moor-singlefile-keep url dir done))
+                     (t (org-moor--fetch-here url dir done file))))
+              (_ (funcall done nil))))))))))
+
+(defun org-moor--fetch-here (url dir done &optional file)
+  "Keep a replica of URL in DIR as `org-moor-fetch' does, fetched here.
+By `org-moor--fetch', with `org-moor-cookie-file'."
   (let ((fetched (make-temp-file (expand-file-name ".fetch" dir))))
     (org-moor--fetch
      url fetched
      (lambda (ok type disposition)
-       (let* ((type (and ok (file-exists-p fetched)
-                         (let ((sent (and type (car (split-string type "[; ]" t)))))
-                           (if (or (not sent) (equal sent "application/octet-stream"))
-                               (or (org-moor-sniff-type fetched) sent)
-                             (downcase sent)))))
-              (name (and type (org-moor-replica-name url type disposition)))
-              (page (equal name org-moor-snapshot-file))
-              (spelled (org-moor-url-file-name url)))
-         (cond
-          ((or (not name)
-               (and page spelled
-                    (not (equal (cdr (assoc "text/html" org-moor-mime-extensions))
-                                (org-moor-extension spelled)))))
-           (ignore-errors (delete-file fetched))
-           (funcall done nil))
-          (t
-           (rename-file fetched (expand-file-name name dir) t)
-           (if (not (and page org-moor-snapshot-function))
-               (funcall done name)
-             (let ((whole (make-temp-file (expand-file-name ".page" dir))))
-               (funcall org-moor-snapshot-function url whole
-                        (lambda (ok)
-                          (if ok
-                              (rename-file whole (expand-file-name name dir) t)
-                            (ignore-errors (delete-file whole)))
-                          (funcall done name))))))))))))
+       (if (and ok (file-exists-p fetched))
+           (org-moor--keep-fetched url dir fetched type disposition file done)
+         (ignore-errors (delete-file fetched))
+         (funcall done nil))))))
+
+(defun org-moor--keep-fetched (url dir fetched type disposition file done &optional signin)
+  "Keep FETCHED, what URL sent as TYPE with DISPOSITION, in DIR; call DONE.
+With its name, or nil, as `org-moor-fetch' says, FILE as it says; a page
+sent for a file is `signin' with SIGNIN non-nil.  TYPE is a
+Content-Type, or nil, as is DISPOSITION."
+  (let* ((sent (and type (car (split-string type "[; ]" t))))
+         (type (if (or (not sent) (equal sent "application/octet-stream"))
+                   (or (org-moor-sniff-type fetched) sent)
+                 (downcase sent)))
+         (name (and type (org-moor-replica-name url type disposition)))
+         (page (equal name org-moor-snapshot-file)))
+    (cond
+     ((not name)
+      (ignore-errors (delete-file fetched))
+      (funcall done nil))
+     ((and page (or file (org-moor--url-file-p url)))
+      (ignore-errors (delete-file fetched))
+      (funcall done (and signin 'signin)))
+     (t
+      (rename-file fetched (expand-file-name name dir) t)
+      (if (not (and page org-moor-snapshot-function))
+          (funcall done name)
+        (let ((whole (make-temp-file (expand-file-name ".page" dir))))
+          (funcall org-moor-snapshot-function url whole
+                   (lambda (ok)
+                     (if ok
+                         (rename-file whole (expand-file-name name dir) t)
+                       (ignore-errors (delete-file whole)))
+                     (funcall done name)))))))))
 
 (defconst org-moor-partial-download-regexp
   "\\.\\(crdownload\\|part\\|partial\\|tmp\\|download\\)\\'"
@@ -1322,6 +1376,124 @@ place, or nil.  For `org-moor-fetch-replica', as KEEP."
                   (funcall done org-moor-snapshot-file))
          (funcall done saved))))))
 
+(defun org-moor--singlefile-or-fetch (url dir done)
+  "Keep URL's replica in DIR by single-file, unless URL is spelled as a file.
+A file -- a PDF, a document -- is no page for single-file to save: it is
+fetched, as `org-moor-fetch' fetches a file asked for, by the browser
+single-file saves pages in.  DONE is called as
+`org-moor-singlefile-keep' calls it."
+  (if (org-moor--url-file-p url)
+      (org-moor-fetch url dir done t)
+    (org-moor-singlefile-keep url dir done)))
+
+;;;;; Fetching in the browser
+
+(defcustom org-moor-fetch-in-browser t
+  "Non-nil to have the browser kept for single-file fetch a URL.
+With `org-moor-singlefile-profile', and that browser kept -- see
+`org-moor-singlefile-browser-idle' -- a URL is opened in a tab of it,
+with no window, as the browser opens any: signed in as it is, by
+`org-moor-sign-in', and through its network.  A file -- a PDF, a
+document, shown in the browser or downloaded -- is taken before it is
+either, by script/org-moor-download.mjs, run by `org-moor-node-program';
+a page is saved by `org-moor-singlefile-keep'.  So nothing comes in front
+of you.  The browser is started when it does not run.  Nil, or without
+that browser, curl and monolith fetch the URL here."
+  :type 'boolean
+  :group 'org-moor)
+
+(defcustom org-moor-node-program "node"
+  "The Node.js executable, 22 or later, that runs script/org-moor-download.mjs."
+  :type 'string
+  :group 'org-moor)
+
+(defconst org-moor--download-script
+  (expand-file-name "org-moor-download.mjs" org-moor-script-directory)
+  "A script having the browser kept for single-file fetch a URL.")
+
+(defvar org-moor--browser-fetch-waiting nil
+  "Fetches waiting while the profile is open to sign in, as functions.")
+
+(defun org-moor--browser-fetch-p ()
+  "Non-nil when the browser fetches a URL, see `org-moor-fetch-in-browser'."
+  (and org-moor-fetch-in-browser
+       org-moor-singlefile-profile
+       (org-moor--singlefile-server-p)
+       (executable-find org-moor-node-program)
+       t))
+
+(defun org-moor--browser-fetch (url file then)
+  "Have the browser kept for single-file fetch URL; call THEN with what it got.
+With (file STATUS TYPE DISPOSITION) for a file, written to FILE;
+\=(page LOCATION) for a page, sent from LOCATION after any redirect,
+which is not loaded; `here' when that browser cannot be started, to be
+fetched here; or nil, the echo area saying why.  While the profile is
+open to sign in, once it is quit."
+  (if org-moor--signing-in
+      (push (lambda () (org-moor--browser-fetch url file then))
+            org-moor--browser-fetch-waiting)
+    (let ((agent org-moor--agent))
+      (org-moor--singlefile-server
+       (lambda (server)
+         (let ((org-moor--agent agent))
+           (if server
+               (org-moor--browser-fetch-run server url file then)
+             (funcall then 'here))))))))
+
+(defun org-moor--browser-fetch-run (server url file then)
+  "Have the browser at SERVER fetch URL into FILE; call THEN as
+`org-moor--browser-fetch' says.  It is stopped after
+`org-moor-arriving-timeout' seconds."
+  (let* ((out (generate-new-buffer " *org-moor-download*"))
+         (agent org-moor--agent)
+         (timer nil)
+         (finish
+          (lambda (got why)
+            (when timer (cancel-timer timer))
+            (kill-buffer out)
+            (org-moor--singlefile-server-rest)
+            (let ((org-moor--agent agent))
+              (unless got
+                (org-moor--say "%s" (propertize
+                                     (format "org-moor: the browser did not fetch %s%s"
+                                             url (if why (concat ": " why) ""))
+                                     'face 'warning)))
+              (funcall then got))))
+         (proc
+          (condition-case err
+              (make-process
+               :name "org-moor-download"
+               :buffer out
+               :coding (cons 'utf-8 (org-moor-argument-coding))
+               :noquery t
+               :command (list org-moor-node-program org-moor--download-script
+                              server (url-encode-url url) file)
+               :sentinel
+               (lambda (proc _event)
+                 (unless (process-live-p proc)
+                   (let ((lines (with-current-buffer out
+                                  (split-string (buffer-string) "\r?\n"))))
+                     (funcall finish
+                              (and (zerop (process-exit-status proc))
+                                   (pcase lines
+                                     (`("file" ,status ,type ,disposition . ,_)
+                                      (list 'file status
+                                            (and (not (string-empty-p type)) type)
+                                            (and (not (string-empty-p disposition))
+                                                 disposition)))
+                                     (`("page" ,location . ,_) (list 'page location))))
+                              (if (process-get proc 'org-moor-timeout)
+                                  (format "in %d seconds" org-moor-arriving-timeout)
+                                (org-moor--singlefile-output out)))))))
+            (error (funcall finish nil (error-message-string err))
+                   nil))))
+    (when proc
+      (setq timer (run-with-timer org-moor-arriving-timeout nil
+                                  (lambda ()
+                                    (when (process-live-p proc)
+                                      (process-put proc 'org-moor-timeout t)
+                                      (delete-process proc))))))))
+
 (declare-function org-moor-keep-replica "org-moor-place" (records))
 
 (defun org-moor--sign-in-url ()
@@ -1352,8 +1524,12 @@ single-file's, which makes the profile."
             (url-encode-url url)))))
 
 (defun org-moor--signed-in ()
-  "Have the pages queued while the profile was open to sign in saved."
+  "Have what waited while the profile was open to sign in go on.
+The URLs to fetch are fetched, and the pages queued saved."
   (setq org-moor--signing-in nil)
+  (let ((waiting (nreverse org-moor--browser-fetch-waiting)))
+    (setq org-moor--browser-fetch-waiting nil)
+    (mapc #'funcall waiting))
   (org-moor--singlefile-server-next))
 
 ;;;###autoload (autoload 'org-moor-sign-in "org-moor" nil t)
@@ -1472,8 +1648,10 @@ Called with a URL and a function it calls, once it knows, with
 and the directory it downloads into; with `singlefile' when the page is
 saved by `org-moor-singlefile-keep', in a browser of its own that shows
 no window; or with nil when the URL is fetched as `org-moor-fetch'
-fetches it.  DOWNLOAD is opened by `browse-url'.  On Windows, the script
-for the document in front is asked, by the configuration it keeps sites in."
+fetches it.  DOWNLOAD is fetched by that browser, see
+`org-moor-fetch-in-browser'; without it, it is opened by `browse-url'.
+On Windows, the script for the document in front is asked, by the
+configuration it keeps sites in."
   :type '(choice function (const nil))
   :group 'org-moor)
 
@@ -1504,11 +1682,15 @@ One at a time, since a replica is told from another only by when it came."
 (defun org-moor-browser-or-fetch (url dir done &optional unseen)
   "Keep a replica of URL in DIR, then call DONE with its name, or nil.
 By a browser when `org-moor-browser-download-function' tells one how:
-by single-file, or by downloading it, the replica taken as
-`org-moor-arriving' takes one, after any it is already downloading; else
-by `org-moor-fetch'.  DONE is given `signin' when single-file was shown a
-sign-in page.  With UNSEEN, no browser is opened in front of anyone: a
-replica only a download would keep is left, and DONE given `later'."
+by single-file, unless URL is spelled as a file, see
+`org-moor--singlefile-or-fetch'; or by downloading it, fetched by the
+browser single-file saves pages in -- see `org-moor-fetch-in-browser' --
+else in the browser `browse-url' opens,
+the replica taken as `org-moor-arriving' takes one, after any it is
+already downloading.  Else by `org-moor-fetch'.  DONE is given `signin'
+when a sign-in page was shown in its place.  With UNSEEN, no browser is
+opened in front of anyone: a replica only `browse-url' would keep is
+left, and DONE given `later'."
   (if (not org-moor-browser-download-function)
       (org-moor-fetch url dir done)
     (let ((agent org-moor--agent))
@@ -1517,7 +1699,8 @@ replica only a download would keep is left, and DONE given `later'."
                  (let ((org-moor--agent agent))
                    (cond
                     ((not how) (org-moor-fetch url dir done))
-                    ((eq how 'singlefile) (org-moor-singlefile-keep url dir done))
+                    ((eq how 'singlefile) (org-moor--singlefile-or-fetch url dir done))
+                    ((org-moor--browser-fetch-p) (org-moor-fetch (nth 0 how) dir done t))
                     (unseen (funcall done 'later))
                     (t (setq org-moor--browser-queue
                              (append org-moor--browser-queue
@@ -1760,8 +1943,8 @@ No browser is opened in front of anyone; see its UNSEEN."
   "Take WHAT, a file or a URL, into SOURCES, and return a link to it.
 For `org-moor-batch-take' --server, in the Emacs the user works in: a
 URL's replica is kept as a URL taken here is, but by nothing that comes in
-front of the user -- one only a download in the browser would keep has its
-origin alone, for `org-moor-keep-replica' -- and after the link is
+front of the user -- one only `browse-url' would keep has its origin
+alone, for `org-moor-keep-replica' -- and after the link is
 returned, so that this Emacs goes on meanwhile.  A URL whose replica is
 being kept in SOURCES already, for another agent or this one asking
 again, is that source.  See `org-moor--agent' for what the user is
@@ -1809,7 +1992,8 @@ ID is the source's, for waiting on it again."
   org-protocol://moor?path=PATH&title=TITLE&origin=ORIGIN&via=VIA
 
 The first takes a page or a file on the web.  The second takes a page
-that single-file saves, by `org-moor-singlefile-keep'.  The third takes a
+that single-file saves, by `org-moor-singlefile-keep', or a file there,
+see `org-moor--singlefile-or-fetch'.  The third takes a
 file on the web that a browser, signed in where it is, is downloading into
 DIR: its replica is the file come there since SECONDS, a Unix time, moved
 to the source once whole -- see `org-moor-arriving'.  The fourth takes a file on
@@ -1838,7 +2022,7 @@ heading is picked.  Emacs is brought to the front to ask."
              ;; What arrives here has been looked up already, by the
              ;; script for the document in front, or it is from a page.
              (cond
-              ((equal (plist-get info :keep) "singlefile") #'org-moor-singlefile-keep)
+              ((equal (plist-get info :keep) "singlefile") #'org-moor--singlefile-or-fetch)
               ((plist-get info :arriving)
                (org-moor-arriving
                 (plist-get info :arriving)

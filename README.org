@@ -60,6 +60,7 @@ Programs it calls when they are there, and does without when not:
 | ~monolith~    | keeping a web page as one HTML file, with its images  |
 | ~curl~        | downloading a file, or a page's HTML without monolith |
 | ~single-file~ | saving a page only a browser shows whole, unseen      |
+| ~node~        | fetching in the browser single-file uses, unseen      |
 | ~pandoc~      | making HTML, Word, PowerPoint, EPUB readable as text  |
 
 For a browser, ~script/org-moor-bookmarklet.txt~ is a bookmarklet that
@@ -114,10 +115,14 @@ template: ~org-moor-front.ps1 -WriteConfig~ writes it there to be
 changed.  A URL taken in Emacs -- by ~org-moor-take-url~,
 ~org-moor-keep-replica~ or an agent -- is looked up in the same entries,
 through ~org-moor-browser-download-function~, in the background: one an
-entry gives a download for is opened by ~browse-url~, and its replica taken
-from the Downloads folder, one download at a time, since a replica there is
-told from another only by when it came.  One an entry has single-file
-save is saved by it, into the source's directory.
+entry gives a download for is fetched from that download by the browser
+single-file saves pages in -- see below -- and nothing comes in front of
+you.  Without that browser, the download is opened by
+~browse-url~, and its replica taken from the Downloads folder, one
+download at a time, since a replica there is told from another only by
+when it came.  One an entry has single-file save is saved by it, into the
+source's directory, unless its URL is spelled as a file -- a PDF, a
+document -- which is fetched as the download is.
 
 single-file drives Chrome or Chromium -- ~org-moor-singlefile-browser~,
 else the one it finds -- signed in by the profile
@@ -133,6 +138,18 @@ longer changing -- by ~script/org-moor-ready.js~, see
 ~org-moor-singlefile-when-ready~.  single-file is stopped after
 ~org-moor-singlefile-timeout~ seconds, and the echo area says why a page
 was not saved.
+
+That browser, kept in the profile, also fetches every URL Emacs takes,
+see ~org-moor-fetch-in-browser~: the URL is opened in a tab of it, as
+the browser opens any, signed in as it is and through its network, and
+~script/org-moor-download.mjs~, run by Node.js 22 or later, takes a file
+it is sent -- a PDF it would show, a document it would download -- before
+it does either; a page is saved by single-file.  So a file behind a
+sign-in is fetched as you whenever it is not in front of you: taken in
+Emacs, kept again, or taken by an agent.  A page sent where a file was
+asked for is a sign-in page, and the source waits for
+~org-moor-sign-in~, as below.  Without that browser, curl and monolith
+fetch it, with ~org-moor-cookie-file~.
 ~org-moor-sign-in~ opens that browser, with a window, at a URL, to sign in
 and quit; the profile keeps the sign-in.  When the page saved turns out
 to be a sign-in page -- on Windows, one the entry it was taken by does
@@ -147,9 +164,9 @@ replica to read, or why there is none.  While the server of the Emacs you
 work in is running, the command has that Emacs take it, so that a URL is
 fetched as you would fetch it, and waits for the replica, asking every
 second, while that Emacs goes on; nothing is opened in front of you for
-it: a page single-file saves is saved unseen, and a file only a download
-in the browser keeps has its origin alone, for ~org-moor-keep-replica~
-when it suits you.  What is said of it goes to ~*Messages*~ alone, not
+it: a page single-file saves is saved unseen, a file is fetched by that
+browser, and, without it, a file only a download in the browser
+keeps has its origin alone, for ~org-moor-keep-replica~ when it suits you.  What is said of it goes to ~*Messages*~ alone, not
 over what you are doing, and a page single-file saves for an agent waits
 behind any you take yourself.  The command waits less than the two
 minutes an agent's shell gives a command; a page still being kept then
@@ -174,7 +191,7 @@ echo area says so, so that you know it is not a replica you are in.
 A replica that could not be kept is said so in the echo area when it fails;
 downloaded by hand, the file is given to the source with
 ~org-moor-set-replica~, on a link to it or in Dired.  A source that has only
-its origin -- one an agent took, which fetches as nobody, not as you --
+its origin -- one an agent took when it could not fetch as you --
 is given its replica by ~org-moor-keep-replica~, on a link to it, on a heading
 for every source the heading links to, or on a region: a URL is fetched
 again, here, with your cookies, and a path still there is taken.
