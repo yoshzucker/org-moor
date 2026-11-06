@@ -1038,6 +1038,29 @@ single-file; a browser that cannot be started leaves it to be fetched here."
     (should (equal (directory-files dir nil "\\`[^.]") '("r.pdf")))
     (delete-directory dir t)))
 
+(ert-deftest org-moor-test-agent-fetches-in-browser-only-where-listed ()
+  "An agent's URL is fetched by the browser only when a site entry names it;
+any other is fetched here.  The user's is fetched by the browser."
+  (let ((dir (make-temp-file "moor" t)) (by nil))
+    (cl-letf (((symbol-function 'org-moor--browser-fetch-p) (lambda () t))
+              ((symbol-function 'org-moor--browser-fetch)
+               (lambda (url _file then) (push (list 'browser url) by) (funcall then nil)))
+              ((symbol-function 'org-moor--fetch-here)
+               (lambda (url _dir done &optional _file) (push (list 'here url) by) (funcall done nil))))
+      (let ((org-moor-browser-download-function
+             (lambda (url done)
+               (funcall done (and (string-match-p "files" url)
+                                  (list "https://files.example.com/get" "/dl"))))))
+        (org-moor--unseen-keep "https://elsewhere.example.com/a.pdf" dir #'ignore)
+        (let ((org-moor--agent t))
+          (org-moor--unseen-keep "https://elsewhere.example.com/b.pdf" dir #'ignore)
+          (org-moor--unseen-keep "https://files.example.com/view" dir #'ignore))))
+    (should (equal (reverse by)
+                   '((browser "https://elsewhere.example.com/a.pdf")
+                     (here "https://elsewhere.example.com/b.pdf")
+                     (browser "https://files.example.com/get"))))
+    (delete-directory dir t)))
+
 (ert-deftest org-moor-test-browser-fetch-waits-for-sign-in ()
   "A URL fetched while the profile is open to sign in is fetched once it is quit."
   (let ((org-moor--signing-in t) (org-moor--browser-fetch-waiting nil)

@@ -706,6 +706,11 @@ which tells neither."
 
 (defvar org-moor-singlefile-program)
 
+(defvar org-moor--listed nil
+  "Non-nil while a URL a site entry names is kept.
+As `org-moor-browser-download-function' tells it; an agent's URL is
+fetched by the browser then alone, see `org-moor-fetch-in-browser'.")
+
 (defun org-moor-fetch (url dir done &optional file)
   "Keep a replica of URL in DIR, then call DONE with its name, or nil.
 What it is, is what it sends: a page is kept by
@@ -717,8 +722,10 @@ page -- is not the file, and nothing is kept.
 With `org-moor-fetch-in-browser', the browser kept for single-file fetches
 it, signed in as it is: a page is then saved by
 `org-moor-singlefile-keep', and DONE is given `signin' for a page sent in
-place of a file, which `org-moor-sign-in' lets it fetch."
-  (if (not (org-moor--browser-fetch-p))
+place of a file, which `org-moor-sign-in' lets it fetch.  For an agent,
+only a URL a site entry names, see `org-moor--listed'."
+  (if (not (and (org-moor--browser-fetch-p)
+                (or (not org-moor--agent) org-moor--listed)))
       (org-moor--fetch-here url dir done file)
     (let ((fetched (make-temp-file (expand-file-name ".fetch" dir))))
       (org-moor--browser-fetch
@@ -1397,7 +1404,12 @@ with no window, as the browser opens any: signed in as it is, by
 document, shown in the browser or downloaded -- is taken before it is
 either, by script/org-moor-download.mjs, run by `org-moor-node-program';
 a page is saved by `org-moor-singlefile-keep'.  So nothing comes in front
-of you.  The browser is started when it does not run.  Nil, or without
+of you.  The browser is started when it does not run.
+
+A URL taken for an agent is fetched so only when a site entry names it
+-- see `org-moor-browser-download-function' -- and any other here, as
+nobody: a URL an agent was handed is not to be opened signed in as you,
+where a site elsewhere could have your sign-in let it in.  Nil, or without
 that browser, curl and monolith fetch the URL here."
   :type 'boolean
   :group 'org-moor)
@@ -1696,7 +1708,8 @@ left, and DONE given `later'."
     (let ((agent org-moor--agent))
       (funcall org-moor-browser-download-function url
                (lambda (how)
-                 (let ((org-moor--agent agent))
+                 (let ((org-moor--agent agent)
+                       (org-moor--listed (and how t)))
                    (cond
                     ((not how) (org-moor-fetch url dir done))
                     ((eq how 'singlefile) (org-moor--singlefile-or-fetch url dir done))

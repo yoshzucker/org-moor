@@ -148,7 +148,10 @@ it does either; a page is saved by single-file.  So a file behind a
 sign-in is fetched as you whenever it is not in front of you: taken in
 Emacs, kept again, or taken by an agent.  A page sent where a file was
 asked for is a sign-in page, and the source waits for
-~org-moor-sign-in~, as below.  Without that browser, curl and monolith
+~org-moor-sign-in~, as below.  For an agent, only a URL an entry of
+~front.json~ names is fetched so, and any other as nobody: a URL an agent
+was handed is not opened signed in as you, where a site elsewhere could
+have your sign-in let it in.  Without that browser, curl and monolith
 fetch it, with ~org-moor-cookie-file~.
 ~org-moor-sign-in~ opens that browser, with a window, at a URL, to sign in
 and quit; the profile keeps the sign-in.  When the page saved turns out
