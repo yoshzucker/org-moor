@@ -48,6 +48,7 @@
 ;; `org-moor-keep-replica' keep a replica, from its origin, of sources that have none
 ;; `org-moor-awaiting'   the sources whose replicas the browser is still to save
 ;; `org-moor-prune'      choose which replicas to let go, largest first
+;; `org-moor-migrate-records' write the records of the old form in the current one
 ;;
 ;; See README.org.
 
@@ -63,6 +64,7 @@
 (require 'org-moor-sweep)
 (require 'org-moor-place)
 (require 'org-moor-prune)
+(require 'org-moor-migrate)
 
 (provide 'org-moor)
 ;;; org-moor.el ends here
