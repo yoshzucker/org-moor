@@ -205,7 +205,6 @@ The settings most worth giving:
 | ~org-moor-sweep~                   | what piled up, as one Dired buffer, newest first             |
 | ~org-moor-put-away~                | move files into a directory of yours (and take them)         |
 | ~org-moor-prune~                   | choose which replicas to let go                              |
-| ~org-moor-migrate-records~         | write a sources directory's records of the old form anew     |
 
 With a prefix, the taking commands ask for the heading even in Org.
 
@@ -484,8 +483,7 @@ before.
 emacs --batch -Q -L . -L ../org-dock -L test \
       -l test/org-moor-take-test.el -l test/org-moor-core-test.el \
       -l test/org-moor-return-test.el -l test/org-moor-place-test.el \
-      -l test/org-moor-sweep-test.el -l test/org-moor-migrate-test.el \
-      -f ert-run-tests-batch-and-exit
+      -l test/org-moor-sweep-test.el -f ert-run-tests-batch-and-exit
 #+end_src
 
 * Status
