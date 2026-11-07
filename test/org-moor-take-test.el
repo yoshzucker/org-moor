@@ -655,5 +655,19 @@ cannot be reached, the source is taken all the same."
   (let ((system-type 'darwin))
     (should (eq (org-moor-argument-coding) 'utf-8))))
 
+(ert-deftest org-moor-test-batch-refuses-what-it-does-not-take ()
+  "The batch commands refuse arguments after their own, which Emacs would
+otherwise run once the command returned, and options they do not know."
+  (let ((command-line-args-left '("--eval" "(kill-emacs)")))
+    (should-error (org-moor--batch-end)))
+  (let ((command-line-args-left nil))
+    (should-not (org-moor--batch-end)))
+  (let ((command-line-args-left '("/nonexistent" "moor:x" "words" "-l" "other.el")))
+    (should-error (org-moor-batch-find) :type 'error)
+    (should (equal command-line-args-left '("-l" "other.el"))))
+  (let ((command-line-args-left '("/nonexistent" "file.txt" "--eval=(kill-emacs)")))
+    (should (string-match-p "unknown option"
+                            (cadr (should-error (org-moor-batch-take)))))))
+
 (provide 'org-moor-take-test)
 ;;; org-moor-take-test.el ends here

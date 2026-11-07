@@ -522,6 +522,16 @@ words left out, marked … or ..., split WORDS into parts found in turn."
               (setq found nil))))
         (if found 'found 'not-found)))))
 
+(defun org-moor--batch-end ()
+  "Refuse whatever a batch command has left on the command line.
+Emacs goes on to run what is left once the command returns -- an --eval,
+a -l of any file -- so a command that ignored it would let a caller
+allowed to run it run anything.  Called once the command has read its
+arguments, before it does anything."
+  (when command-line-args-left
+    (error "org-moor: unexpected arguments: %s"
+           (string-join command-line-args-left " "))))
+
 (defun org-moor-batch-find ()
   "Say whether words are in a source's replica, for an agent checking a quote.
 
@@ -534,6 +544,7 @@ Prints `Found', `Not found', or `No replica yet'; see
                                         (error "org-moor: no sources directory"))))
          (link (or (pop command-line-args-left) (error "org-moor: no moor:ID")))
          (words (or (pop command-line-args-left) (error "org-moor: no words")))
+         (_ (org-moor--batch-end))
          (id (car (org-moor-link-parse (string-remove-prefix "moor:" link))))
          (record (or (org-moor-record id sources)
                      (error "org-moor: no source %s in %s" id sources))))

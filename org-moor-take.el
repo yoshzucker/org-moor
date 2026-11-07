@@ -936,6 +936,11 @@ server FILE is is told of a replica awaited, so that the user sees it."
                      (not (string-prefix-p "--" (car command-line-args-left)))
                      (pop command-line-args-left)))
          (options (append options (org-moor--batch-options)))
+         (_ (org-moor--batch-end))
+         (_ (dolist (option options)
+              (unless (memq (car option) '(server origin-url machine-readable
+                                                  machine-readable-url))
+                (error "org-moor: unknown option --%s" (car option)))))
          (option (lambda (name) (alist-get name options)))
          (again (and (string-match "\\`moor:\\([^]:\n]+\\)\\'" what)
                      (match-string 1 what)))
