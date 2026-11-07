@@ -10,11 +10,6 @@
       "match": "^https://wiki\\.example\\.com/pages/(?<id>\\d+)",
       "download": "https://wiki.example.com/export/pdf?page={id}",
       "title": " - Example Wiki$"
-    },
-    {
-      "note": "An example: a page only a browser shows whole, saved by single-file in a browser of its own that shows no window.  Give it your site.",
-      "match": "^https://intranet\\.example\\.com/",
-      "singlefile": true
     }
   ]
 }

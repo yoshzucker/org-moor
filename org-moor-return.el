@@ -89,7 +89,7 @@ sources linked, a source counted once however often its places are."
                  (let ((time (let ((known (gethash id times 'unknown)))
                                (if (eq known 'unknown)
                                    (puthash id (org-moor--time-in
-                                                (plist-get (org-moor-find-record id) :taken))
+                                                (org-moor-record-time (org-moor-find-record id)))
                                             times)
                                  known))))
                    (puthash pos

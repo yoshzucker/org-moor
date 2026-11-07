@@ -81,7 +81,8 @@
       (should (re-search-forward "^\\[\\[moor:\\([^]]+\\)\\]\\[minutes\\]\\]$" nil t))
       (let ((record (org-moor-record (match-string 1))))
         (should (plist-get record :replica))
-        (should (equal (plist-get record :origin) (expand-file-name "minutes.docx" proj)))))))
+        (should (equal (plist-get record :origin-url)
+                       (org-moor-path-url (expand-file-name "minutes.docx" proj))))))))
 
 (ert-deftest org-moor-test-sweep-lists-the-pile ()
   (let* ((dl (file-name-as-directory (make-temp-file "dl" t)))

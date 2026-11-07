@@ -84,10 +84,10 @@ Its record stays, origin and all, and links to it open the origin."
   (setq org-moor-prune--replicas (org-moor-replicas org-moor-prune--sources))
   (mapcar
    (lambda (c)
-     (let ((origin (or (plist-get c :origin) "")))
+     (let ((origin (or (plist-get c :origin-url) "")))
        (list (plist-get c :id)
              (vector (file-size-human-readable (plist-get c :size))
-                     (let ((ts (plist-get c :taken)))
+                     (let ((ts (org-moor-record-time c)))
                        (if (and ts (string-match org-ts-regexp-both ts))
                            (substring (match-string 0 ts) 1 11)
                          ""))
@@ -147,7 +147,7 @@ Its record stays, origin and all, and links to it open the origin."
 
 (defun org-moor-prune-set-origin (origin)
   "Give this source the origin ORIGIN."
-  (interactive (list (read-string "Origin: " (plist-get (org-moor-prune--replica-at-point) :origin))))
+  (interactive (list (read-string "Origin: " (plist-get (org-moor-prune--replica-at-point) :origin-url))))
   (org-moor-set-origin (list (org-moor-prune--replica-at-point)) origin)
   (tabulated-list-revert))
 

@@ -11,12 +11,15 @@
 
 ;; Two directions between a heading and a source it links to.
 ;;
-;; From the source: reading a replica, `org-moor-insert-place' notes the page
-;; shown, or the line point is on, as a link -- and what is selected,
-;; quoted under it -- in the heading it is read for, taken out by org-dock
-;; to be written in.  The heading is the one beside, when reading with
-;; `org-moor-noter'; else the one the replica was opened from; else one that
-;; links to the source, asked for.
+;; From the source: reading a replica in Emacs -- a PDF, a text --
+;; `org-moor-insert-place' notes what is selected, quoted, with a link to
+;; it, in the heading it is read for, taken out by org-dock to be written
+;; in.  The heading is the one beside, when reading with `org-moor-noter';
+;; else the one the replica was opened from; else one that links to the
+;; source, asked for.  A replica read in its own program -- a page in the
+;; browser, a document in Word -- is quoted from the clipboard, by
+;; `org-moor-insert-quote' in the heading.  The place is the words quoted,
+;; found again in any form of the source.
 ;;
 ;; `org-moor-noter' sets the reading up as org-noter does: the replica on the
 ;; left, the heading on the right, taken out to be written in, and `i' to
@@ -25,7 +28,9 @@
 ;;
 ;; From the heading: `org-moor-open-replica' opens the replica of a source it
 ;; links to; `org-moor-open-origin', the source's origin -- the page on the
-;; web, or the file where it was.
+;; web, or the file where it was; `org-moor-open-machine-readable', what a
+;; machine reads of it.  `org-moor-awaiting' lists the sources whose
+;; replicas are still to be saved, and opens each in the browser.
 ;;
 ;; `org-moor-set-title' gives a source another title, since the record that
 ;; holds it is out of the way, and the links here that bear the old one.
@@ -36,6 +41,7 @@
 (require 'org-moor-take)
 (require 'org-moor-return)
 (require 'cl-lib)
+(require 'tabulated-list)
 
 (declare-function pdf-view-active-region-text "pdf-view")
 (declare-function pdf-view-active-region-p "pdf-view")
@@ -69,34 +75,15 @@ made readable as lies there too, and is the same source's."
         ((use-region-p)
          (buffer-substring-no-properties (region-beginning) (region-end)))))
 
-(defun org-moor-current-place ()
-  "Return (PLACE . KIND) for what this buffer shows.
-The page of a PDF, KIND `page'; in EWW, whose lines are only how it was
-drawn, the start of what is selected, or of the line point is on, KIND
-`text'; else the line point is on, or the first of those selected, KIND
-`line'."
-  (cond
-   ((org-moor-current-page) (cons (org-moor-current-page) 'page))
-   ((derived-mode-p 'eww-mode)
-    (cons (org-moor-text-place
-           (if (use-region-p)
-               (buffer-substring-no-properties (region-beginning) (region-end))
-             (buffer-substring-no-properties (line-beginning-position)
-                                             (line-end-position))))
-          'text))
-   (t (cons (line-number-at-pos (if (use-region-p) (region-beginning) (point)))
-            'line))))
-
-(defun org-moor-place-string (record place kind &optional selection alone)
-  "Return a link to PLACE of the source RECORD, with SELECTION quoted under it.
-KIND is `page', `line' or `text', what PLACE is; nil PLACE links to the
-source.  ALONE names PLACE without the title."
-  (concat (org-moor-link record place kind alone) "\n"
-          (if (and selection (not (string-blank-p selection)))
-              (concat "#+begin_quote\n"
-                      (org-escape-code-in-string (string-trim selection))
-                      "\n#+end_quote\n")
-            "")))
+(defun org-moor-place-string (record selection &optional by-quote)
+  "Return a link to the words SELECTION in the source RECORD, quoted under it.
+The link's place is the start of the words; with BY-QUOTE, it has none,
+the quote being the place -- see `org-moor-place-by-quote-p'."
+  (let ((words (string-trim selection)))
+    (concat (org-moor-link record (and (not by-quote) (org-moor-text-place words))) "\n"
+            "#+begin_quote\n"
+            (org-escape-code-in-string words)
+            "\n#+end_quote\n")))
 
 ;;;; The heading a source is read for
 
@@ -159,11 +146,11 @@ and so writes it back when reading stops.")
 
 ;;;###autoload (autoload 'org-moor-insert-place "org-moor" nil t)
 (defun org-moor-insert-place ()
-  "Note the place being read in the heading it is read for.
-The page shown, or the line point is on, as a link named by the source's
-title, and what is selected, quoted under it.  They are written in the
-heading taken out by org-dock, after the line its point is on, and the
-heading is shown.  The heading is the one beside, when reading with
+  "Note what is selected, quoted, in the heading the replica is read for.
+With a link to the words, named by the source's title; see
+`org-moor-place-string'.  They are written in the heading taken out by
+org-dock, after the line its point is on, and the heading is shown.
+The heading is the one beside, when reading with
 `org-moor-noter'; else the one the replica was opened from; else one that
 links to the source, asked for.  A file that is not a source's replica yet
 is taken first.  In an org-noter session, `org-noter-insert-note' instead."
@@ -172,8 +159,10 @@ is taken first.  In an org-noter session, `org-noter-insert-note' instead."
       (call-interactively #'org-noter-insert-note)
     (let* ((file (or (org-moor-shown-file)
                      (user-error "org-moor: this buffer is not a file")))
-           (place (org-moor-current-place))
-           (selection (org-moor-current-selection))
+           (selection (let ((s (org-moor-current-selection)))
+                        (if (and s (not (string-blank-p s)))
+                            s
+                          (user-error "org-moor: select the words to quote"))))
            (record (org-moor-replica-record file))
            (taken (and (not record)
                        (if (y-or-n-p "Not a source yet; take it? ")
@@ -197,13 +186,28 @@ is taken first.  In an org-noter session, `org-noter-insert-note' instead."
                            (org-moor-headings-linking (plist-get record :id)))
                           (user-error "org-moor: no heading links to this source")))))))
       (org-moor--write-in dock (org-moor-place-string
-                                record (car place) (cdr place) selection
-                                (with-current-buffer dock (org-moor-place-alone-p))))
+                                record selection
+                                (with-current-buffer dock (org-moor-place-by-quote-p))))
       (unless (get-buffer-window dock)
         (display-buffer dock '((display-buffer-reuse-window display-buffer-pop-up-window)
                                (inhibit-same-window . t))))
       (when (use-region-p) (deactivate-mark))
-      (message "org-moor: noted %s" (org-moor-link-name record (car place) (cdr place))))))
+      (message "org-moor: noted %s" (org-moor-link-name record (org-moor-text-place selection))))))
+
+;;;###autoload (autoload 'org-moor-insert-quote "org-moor" nil t)
+(defun org-moor-insert-quote (record words)
+  "Quote WORDS of the source RECORD here, with a link to them.
+For a replica read in its own program -- a page in the browser, a
+document in Word -- where the words to quote are copied.  After the line
+point is on, as `org-moor-place-string' writes them.  Interactively, the
+source of the link at point, or one the heading links to, and the words
+on the clipboard."
+  (interactive (list (org-moor--record-here) (org-moor--clipboard)))
+  (when (string-blank-p words)
+    (user-error "org-moor: no words to quote"))
+  (org-moor--write-in (current-buffer)
+                      (org-moor-place-string record words (org-moor-place-by-quote-p)))
+  (message "org-moor: quoted %s" (org-moor-link-name record (org-moor-text-place words))))
 
 (define-obsolete-function-alias 'org-moor-insert-note #'org-moor-insert-place "0.2")
 
@@ -248,16 +252,27 @@ the system opens it with."
 A URL in the browser; a path where it still is, HOW as for
 `org-moor-open-replica'."
   (interactive "P")
-  (org-moor--open-origin (or (plist-get (org-moor--record-here) :origin)
+  (org-moor--open-origin (or (plist-get (org-moor--record-here) :origin-url)
                              (user-error "org-moor: no origin"))
                          how))
+
+;;;###autoload (autoload 'org-moor-open-machine-readable "org-moor" nil t)
+(defun org-moor-open-machine-readable ()
+  "Open what a machine reads of the source at point, or that a heading links to.
+Its machine readable file, in Emacs; a source without one is read by a
+machine as its replica is, which `org-moor-open-replica' opens."
+  (interactive)
+  (let ((record (org-moor--record-here)))
+    (find-file (or (plist-get record :machine-readable)
+                   (user-error "org-moor: %s has no machine readable file; its replica is read as it is"
+                               (plist-get record :title))))))
 
 ;;;###autoload (autoload 'org-moor-clip-origin "org-moor" nil t)
 (defun org-moor-clip-origin ()
   "Put the origin of the source at point, or of one the heading links to,
 on the clipboard.  Onto the kill ring too, as written in its record."
   (interactive)
-  (let ((origin (or (plist-get (org-moor--record-here) :origin)
+  (let ((origin (or (plist-get (org-moor--record-here) :origin-url)
                     (user-error "org-moor: no origin"))))
     (kill-new origin)
     (message "org-moor: on the clipboard: %s" origin)))
@@ -296,7 +311,7 @@ archive -- whose origin is that folder instead."
   (when (string-empty-p (string-trim origin))
     (user-error "org-moor: no origin given"))
   (dolist (record records)
-    (org-moor-record-set record :origin (string-trim origin)))
+    (org-moor-record-set record :origin-url (org-moor-path-url (string-trim origin))))
   (when (use-region-p) (deactivate-mark))
   (message "org-moor: origin of %d source%s set to %s"
            (length records) (if (cdr records) "s" "") origin))
@@ -339,16 +354,16 @@ offered."
     (when (and old (not (y-or-n-p (format "Replace the replica %s? "
                                           (file-name-nondirectory old)))))
       (user-error "org-moor: replica kept"))
-    (when old
-      ;; What the old replica was made readable as is not this one.
-      (let ((md (concat old ".md")))
-        (when (file-exists-p md) (delete-file md)))
-      (unless (equal (file-truename old) (file-truename replica))
-        (delete-file old)))
+    (when (and old (not (equal (file-truename old) (file-truename replica))))
+      (delete-file old))
     (if (org-moor-move-p file)
         (rename-file file replica t)
       (copy-file file replica t t))
-    (org-moor-record-set record :file name)
+    (org-moor-record-replica record name 'file)
+    (when (and org-moor--waiting
+               (equal (plist-get (plist-get org-moor--waiting :record) :id)
+                      (plist-get record :id)))
+      (org-moor-stop-waiting))
     (message "org-moor: %s is the replica of %s" name (plist-get record :title))))
 
 (defun org-moor--records-to-keep ()
@@ -373,45 +388,106 @@ those the heading at point, or a heading under it, links to."
 ;;;###autoload (autoload 'org-moor-keep-replica "org-moor" nil t)
 (defun org-moor-keep-replica (records)
   "Keep a replica of each source of RECORDS that has none, from its origin.
-For a source that has only its origin -- taken by an agent, which could
-not fetch it as you, signed in, or whose replica was let go.  A URL is
-fetched as `org-moor-take-url' fetches it, in the background; a path
-still there is moved when it is in `org-moor-move-directories', else
-copied, as taking it would.  A source whose replica is there is left as it
-is; `org-moor-set-replica' replaces a replica.
-Interactively, the sources linked in the region, else the source of the
-link at point, else those the heading links to."
+For a source that has only its origin -- taken by an agent, or whose
+replica was let go.  A file still where its origin says is moved when it
+is in `org-moor-move-directories', else copied, as taking it would.  The
+sources on the web are listed by `org-moor-awaiting', to have the browser
+save each.  A source whose replica is there is left as it is;
+`org-moor-set-replica' replaces a replica.  Interactively, the sources
+linked in the region, else the source of the link at point, else those
+the heading links to."
   (interactive (list (org-moor--records-to-keep)))
-  (let ((had 0))
+  (let ((had 0)
+        (web nil))
     (dolist (record records)
-      (let* ((origin (plist-get record :origin))
-             (path (and origin
-                        (not (string-match-p "\\`https?://" origin))
-                        (expand-file-name (if (string-prefix-p "file:" origin)
-                                              (org-moor-file-url-path origin)
-                                            origin)))))
+      (let* ((origin (plist-get record :origin-url))
+             (path (and origin (org-moor-url-path origin))))
         (cond
          ((plist-get record :replica) (cl-incf had))
          ((not origin)
           (message "org-moor: %s has no origin to keep a replica from"
                    (plist-get record :title)))
-         ((not path) (org-moor-fetch-replica record))
+         ((not path) (push record web))
          ((file-regular-p path)
           (let ((replica (expand-file-name (file-name-nondirectory path)
-                                        (plist-get record :dir))))
+                                           (plist-get record :dir))))
             (if (org-moor-move-p path)
                 (rename-file path replica t)
               (copy-file path replica t t))
-            (org-moor-record-set record :file (file-name-nondirectory path))
+            (org-moor-record-replica record (file-name-nondirectory path) 'file)
             (message "Kept %s" (plist-get record :title))))
          (t (message "%s" (propertize
                            (format "org-moor: the origin of %s is gone: %s"
-                                   (plist-get record :title) origin)
+                                   (plist-get record :title) path)
                            'face 'warning))))))
     (when (use-region-p) (deactivate-mark))
-    (when (= had (length records))
-      (message "org-moor: %s already kept"
-               (if (cdr records) (format "all %d sources are" had) "its replica is")))))
+    (cond (web (org-moor-awaiting (nreverse web)))
+          ((= had (length records))
+           (message "org-moor: %s already kept"
+                    (if (cdr records) (format "all %d sources are" had) "its replica is"))))))
+
+;;;; Awaited replicas
+
+(defvar-local org-moor-awaiting--records nil
+  "The sources `org-moor-awaiting' lists.")
+
+(defun org-moor-awaiting--entries ()
+  "Return the entries of the sources listed, those still without a replica."
+  (delq nil
+        (mapcar (lambda (record)
+                  (let ((record (or (org-moor--record-in (plist-get record :dir)
+                                                         (plist-get record :id))
+                                    record)))
+                    (unless (plist-get record :replica)
+                      (list record
+                            (vector (string-trim (or (plist-get record :replica-requested) "")
+                                                 "\\[" "\\]")
+                                    (or (plist-get record :title) "")
+                                    (or (plist-get record :origin-url) ""))))))
+                org-moor-awaiting--records)))
+
+(defun org-moor-awaiting-open ()
+  "Open the source on this line in the browser, and wait for its replica.
+See `org-moor-open-in-browser'."
+  (interactive)
+  (org-moor-open-in-browser (or (tabulated-list-get-id)
+                                (user-error "org-moor: no source on this line"))))
+
+(defvar org-moor-awaiting-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'org-moor-awaiting-open)
+    map)
+  "Keymap of `org-moor-awaiting-mode'.")
+
+(define-derived-mode org-moor-awaiting-mode tabulated-list-mode "Moor-Awaiting"
+  "The sources whose replicas are awaited.
+\\<org-moor-awaiting-mode-map>\\[org-moor-awaiting-open] opens one in the browser, to save its replica,
+and waits for it; \\[revert-buffer] lists again those still awaited."
+  (setq tabulated-list-format [("Asked for" 22 t) ("Title" 40 t) ("Origin" 0 t)]
+        tabulated-list-sort-key '("Asked for"))
+  (add-hook 'tabulated-list-revert-hook
+            (lambda () (setq tabulated-list-entries (org-moor-awaiting--entries)))
+            nil t)
+  (tabulated-list-init-header))
+
+;;;###autoload (autoload 'org-moor-awaiting "org-moor" nil t)
+(defun org-moor-awaiting (records)
+  "List the sources of RECORDS whose replicas are awaited, to save each.
+In a buffer of its own; RET there opens one in the browser and waits for
+its replica, see `org-moor-open-in-browser'.  Interactively, those linked
+in the region, else the source of the link at point, else those the
+heading, or the file before its first heading, links to -- as
+`org-moor-keep-replica' takes them."
+  (interactive (list (org-moor--records-to-keep)))
+  (let ((records (seq-filter (lambda (r) (not (plist-get r :replica))) records)))
+    (if (not records)
+        (message "org-moor: no replica awaited here")
+      (with-current-buffer (get-buffer-create "*org-moor awaiting*")
+        (org-moor-awaiting-mode)
+        (setq org-moor-awaiting--records records
+              tabulated-list-entries (org-moor-awaiting--entries))
+        (tabulated-list-print)
+        (pop-to-buffer (current-buffer))))))
 
 ;;;###autoload (autoload 'org-moor-set-title "org-moor" nil t)
 (defun org-moor-set-title (record title)
@@ -472,7 +548,7 @@ Only `i' and `q' are bound, so that the keys you move with stay yours.")
   "Read a replica without changing it; `i' notes the place at point, `q' stops.
 A text is read-only, and its line marked, while the mode is on."
   :lighter " Moor"
-  (unless (derived-mode-p 'pdf-view-mode 'doc-view-mode 'eww-mode)
+  (unless (derived-mode-p 'pdf-view-mode 'doc-view-mode)
     (if org-moor-noter-mode
         (progn (setq org-moor-noter--read-only buffer-read-only)
                (read-only-mode 1)
@@ -510,11 +586,11 @@ it, links to.  The replica, as Emacs can read it, opens on the left in
 `org-moor-noter-mode'; on the right, the heading, taken out by org-dock
 to be written in.  `i' notes the place there, as `org-moor-insert-place';
 `q' writes the heading back and puts the windows back, as C-c C-c in it
-does.  A PDF is shown by pdf-tools when it is there, else by DocView; a
-page, by EWW, where `i' notes what is selected as a text to find; Word,
-PowerPoint and the like, as what pandoc makes them, whose lines `i'
-notes -- see `org-moor-readable-converters'.
-Any other replica is opened as `org-moor-open-replica' would."
+does.  A PDF is shown by pdf-tools when it is there, else by DocView.
+Only a PDF and a text are read so, as they are seen; any other replica
+-- a page, a document -- is opened in its own program, as
+`org-moor-open-replica' opens it, to be quoted by
+`org-moor-insert-quote'."
   (interactive)
   (let* ((record (org-moor--record-here))
          (replica (plist-get record :replica)))

@@ -20,16 +20,15 @@
   having the browser, which is signed in, download it from a URL that
   says to.  Emacs is not kept waiting for that: it is told the file is
   arriving in the Downloads folder, and takes it from there once whole,
-  with its URL kept as where it came from.  A page only a browser shows
-  whole Emacs has saved by single-file, in a browser of its own that shows
-  no window.  Any other URL Emacs fetches itself.
+  with its URL kept as where it came from.  Any other page Emacs waits for
+  in the Downloads folder, which you save it into with SingleFile.  Emacs
+  fetches nothing itself.
 
   Which sites those are is the configuration's, a JSON file at
   ~/.config/org-moor/front.json ($env:XDG_CONFIG_HOME when set): under
   sites, an entry -- one { } -- each, its match a regular expression for
-  the URL, and either download, the URL to send the browser to, {name} in
-  it the group of that name in match, or singlefile, true for a page
-  single-file saves; and title, when
+  the URL, and download, the URL to send the browser to, {name} in it the
+  group of that name in match; and title, when
   given, a regular expression for what the site adds to the window's
   title, which is taken off.  A URL gets the first entry whose match fits
   it, and nothing from any other.  Without
@@ -59,10 +58,9 @@
 
 .PARAMETER Resolve
   A URL to look up instead of reading a window, for Emacs: printed are
-  the URL a browser downloads it from, by the configuration's entries, and
-  the Downloads folder, a line each; for an entry that gives singlefile,
-  the URL itself and singlefile; nothing when no entry gives either.
-  Nothing is opened.
+  the URL a browser downloads it from, by the configuration's entries, or
+  the URL itself when no entry gives one, and the Downloads folder, a line
+  each.  Nothing is opened.
 #>
 param([long]$Hwnd = 0, [switch]$WriteConfig, [string]$Resolve = '')
 $ErrorActionPreference = 'SilentlyContinue'
@@ -95,8 +93,7 @@ function Read-Sites {
 
 # For a URL matching an entry's match, the browser is made to keep it: it is
 # sent to the entry's download, {name} there being the group of that name in
-# match; or, for an entry whose singlefile is true, Emacs has single-file
-# save it.  The entry's title is what is taken off the window's title then.
+# match.  The entry's title is what is taken off the window's title then.
 # Return the first that matches, its download filled in, or $null.
 function Get-BrowserKeep($url) {
   foreach ($entry in Read-Sites) {
@@ -106,8 +103,7 @@ function Get-BrowserKeep($url) {
         [regex]::Replace($entry.download, '\{(\w+)\}',
           { param($m) [string]$groups[$m.Groups[1].Value] })
       } else { '' }
-      return @{ Download = $download; Singlefile = [bool]$entry.singlefile
-                Title = [string]$entry.title }
+      return @{ Download = $download; Title = [string]$entry.title }
     }
   }
   return $null
@@ -121,22 +117,14 @@ function Get-Downloads {
   return $dir
 }
 
-# For Emacs, taking a URL it was given rather than one in front: the URL a
-# browser downloads it from, by the same entries, and where to, a line each;
-# for singlefile, the URL itself and `singlefile'; nothing for a URL no
-# entry gives either for.
+# For Emacs, having the browser open a URL it was given rather than one in
+# front: the URL the browser is sent to, by the same entries, or the URL
+# itself, and where it saves to, a line each.
 if ($Resolve) {
   $keep = Get-BrowserKeep $Resolve
-  if ($keep -and ($keep.Download -or $keep.Singlefile)) {
-    [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
-    if ($keep.Download) {
-      Write-Output $keep.Download
-      Write-Output (Get-Downloads)
-    } else {
-      Write-Output $Resolve
-      Write-Output 'singlefile'
-    }
-  }
+  [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
+  Write-Output $(if ($keep -and $keep.Download) { $keep.Download } else { $Resolve })
+  Write-Output (Get-Downloads)
   exit 0
 }
 
@@ -293,7 +281,7 @@ $handle = [IntPtr]$window.Current.NativeWindowHandle
 $proc = Get-Process -Id $window.Current.ProcessId
 $exe = $proc.ProcessName
 
-$path = ''; $url = ''; $origin = ''; $arriving = ''; $since = ''; $keepBy = ''
+$path = ''; $url = ''; $origin = ''; $arriving = ''; $since = ''
 $title = $window.Current.Name
 
 switch -Regex ($exe) {
@@ -360,12 +348,12 @@ switch -Regex ($exe) {
     } elseif ($url) {
       $keep = Get-BrowserKeep $url
       if ($keep -and $keep.Title) { $title = $title -replace $keep.Title, '' }
+      # What arrives in the Downloads folder from now is the replica: the
+      # file the browser is sent to download, or the page saved there.
+      $arriving = Get-Downloads
+      $since = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
       if ($keep -and $keep.Download) {
-        $arriving = Get-Downloads
-        $since = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         Start-Process -FilePath $proc.Path -ArgumentList $keep.Download
-      } elseif ($keep -and $keep.Singlefile) {
-        $keepBy = 'singlefile'
       }
     }
   }
@@ -376,7 +364,6 @@ if (-not $path -and -not $url) { exit 0 }
 $q = if ($path) { 'path=' + [uri]::EscapeDataString($path) } else { 'url=' + [uri]::EscapeDataString($url) }
 if ($origin) { $q += '&origin=' + [uri]::EscapeDataString($origin) }
 if ($arriving) { $q += '&arriving=' + [uri]::EscapeDataString($arriving) + '&since=' + $since }
-if ($keepBy) { $q += '&keep=' + $keepBy }
 if ($title) { $q += '&title=' + [uri]::EscapeDataString($title) }
 $protocolUrl = 'org-protocol://moor?' + $q
 
