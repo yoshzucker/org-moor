@@ -151,23 +151,23 @@ echo area says why.
 
 ** Following a link
 
-Following a link opens the source's replica as it is seen: a PDF and a
-text in Emacs, a page in the browser, anything else in its program, by
-~org-file-apps~ as a ~file:~ link is; in the program the system opens
-it with on ~C-u C-u~.  A link to words opens the replica at them: a PDF
-at the page they are on, a text at them, and a page in the browser at
-them by a text fragment, ~#:~:text=~, where the browser goes to words.
-Wherever the words cannot be shown -- a document in Word, a browser that
-does not go to them -- they are put on the clipboard, to be found, and
-the echo area says so.  When there is no replica yet, the origin is
-opened, as it is now, and the echo area says so.  A file downloaded by
-hand is given to a source with ~org-moor-set-replica~, on a link to it
-or in Dired.
-Whether a source has its replica is said before the link is followed:
-with point on a link, ~org-moor-eldoc-setup~ on ~org-mode-hook~ has the
-echo area say the replica and its size, or that it is awaited, how and
-when it came, what a machine reads of it, and its origin; the mouse
-over a link says the same.
+Following a link opens the source's replica as it is seen: a text in
+Emacs, a page in the browser, anything else -- a PDF among them -- by
+~org-file-apps~ as a ~file:~ link is; in Emacs on ~C-u~, in the program
+the system opens it with on ~C-u C-u~.  A link to words opens the
+replica at them: a text at them, a PDF read in Emacs at the page they
+are on, and a page in the browser at them by a text fragment,
+~#:~:text=~, where the browser goes to words.  Wherever the words cannot
+be shown -- a document in Word, a browser that does not go to them --
+they are put on the clipboard, to be found, and the echo area says so.
+When there is no replica yet, the origin is opened, as it is now, and
+the echo area says so.  A file downloaded by hand is given to a source
+with ~org-moor-set-replica~, on a link to it or in Dired.  Whether a
+source has its replica is said before the link is followed: with point
+on a link, ~org-moor-eldoc-setup~ on ~org-mode-hook~ has the echo area
+say the replica and its size, or that it is awaited, how and when it
+came, what a machine reads of it, and its origin; the mouse over a link
+says the same.
 
 The settings most worth giving:
 
@@ -178,7 +178,9 @@ The settings most worth giving:
   is waited for.
 - ~org-moor-directory-roots~: where ~org-moor-put-away~ offers to put files.
 - ~org-file-apps~, Org's: which replicas Emacs reads, and which the system
-  opens.
+  opens.  Org's default opens a PDF outside Emacs; to read one in Emacs,
+  by pdf-tools or DocView, at the page a link's words are on:
+  : (add-to-list 'org-file-apps '("\\.pdf\\'" . emacs))
 - ~org-dock-agent-function~, org-dock's: an agent to help write a heading.
 
 * Commands
@@ -405,14 +407,15 @@ org-dock~ -- into a copy of its own, written back on ~C-c C-c~.  What is
 noted from a source goes there.
 
 ~org-moor-noter~, on a heading, reads a source it links to, or one a
-heading under it does, beside it, as org-noter does: a PDF, or a text,
-opens on the left in ~org-moor-noter-mode~, and the heading on the right,
-taken out to be written in.  A PDF is shown by pdf-tools when it is
-there, else by DocView; a text is read-only, with its line marked.  The
-keys you move with are left alone -- Evil's among them -- ~i~ notes, and
-~q~ writes the heading back and puts the windows back.  Only a PDF and a
-text are read so, since only they are shown in Emacs as they are seen; a
-page or a document opens in its own program instead.
+heading under it does, beside it, as org-noter does: a text, or a PDF
+Org opens in Emacs, opens on the left in ~org-moor-noter-mode~, and the
+heading on the right, taken out to be written in.  A PDF is shown by
+pdf-tools when it is there, else by DocView; a text is read-only, with
+its line marked.  The keys you move with are left alone -- Evil's among
+them -- ~i~ notes, and ~q~ writes the heading back and puts the windows
+back.  Only these are read so, since only they are shown in Emacs as
+they are seen; a page, a document, or a PDF Org opens outside, opens in
+its own program instead.
 
 ~org-moor-insert-place~, ~i~ there, quotes the words selected, with a
 link to them.  They go in the heading after the line its point is on, so

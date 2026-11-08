@@ -321,6 +321,33 @@ PLACE is the words quoted there, to be found again, or nil."
   "Return non-nil when FILE is a PDF."
   (equal (org-moor-extension file) "pdf"))
 
+(defun org-moor-emacs-opens-p (file)
+  "Return non-nil when Org opens FILE, as a `file:' link, in Emacs.
+By the first entry of `org-file-apps', then the system's own list, that
+names FILE's form, as `org-open-file' reads them; by `auto-mode-alist'
+when none does and `org-file-apps' has an `auto-mode' entry.  A PDF is
+read in Emacs, by pdf-tools or DocView, when this says so."
+  (require 'org)
+  (let* ((apps (append org-file-apps
+                       (pcase system-type
+                         ('darwin org-file-apps-macos)
+                         ('windows-nt org-file-apps-windowsnt)
+                         (_ org-file-apps-gnu))))
+         (name (downcase file))
+         (entry (seq-find
+                 (lambda (app)
+                   (and (stringp (car app))
+                        (string-match-p (if (string-match-p "\\W" (car app))
+                                            (car app)
+                                          (concat "\\." (car app) "\\'"))
+                                        name)))
+                 apps)))
+    (if entry
+        (eq (cdr entry) 'emacs)
+      (and (assq 'auto-mode apps)
+           (assoc-default name auto-mode-alist #'string-match)
+           t))))
+
 (defun org-moor-page-p (file)
   "Return non-nil when FILE is a page, which a browser shows."
   (member (org-moor-extension file) '("html" "htm")))
@@ -570,17 +597,20 @@ marks -- where it does."
 
 (defun org-moor-open-replica-file (file &optional place then how)
   "Open FILE, a replica, as it is seen, at PLACE when there is one.
-PLACE is the words quoted from it.  A PDF and a text are shown in Emacs,
-at the page, or the line, PLACE is on; a page in the browser, at PLACE
-where the browser goes to words; anything else in its program, by
-`org-open-file' as a `file:' link is.  Where PLACE is not shown, it is
+PLACE is the words quoted from it.  A text is shown in Emacs at the line
+PLACE is on, and a PDF at the page, where Org opens a PDF in Emacs
+\(`org-moor-emacs-opens-p'); a page in the browser, at PLACE where the
+browser goes to words; anything else, a PDF Org opens outside among them,
+in its program, by `org-open-file' as a `file:' link is.  Where PLACE is not shown, it is
 put on the clipboard to be found.  HOW is the prefix for that, as for
 following a link: nil for what `org-file-apps' says, (4) for Emacs,
 \(16) for the program the system opens it with -- a PDF or a text too.
 THEN, when given, is called in the buffer that shows FILE, once it is
 shown; not when FILE is opened outside Emacs."
   (cond
-   ((and (not (equal how '(16))) (org-moor-pdf-p file))
+   ((and (not (equal how '(16)))
+         (org-moor-pdf-p file)
+         (or (equal how '(4)) (org-moor-emacs-opens-p file)))
     (let ((page (and place (org-moor-pdf-page-of file place))))
       (find-file file)
       (when page
@@ -605,8 +635,11 @@ shown; not when FILE is opened outside Emacs."
 
 (defun org-moor-file-to-read (replica)
   "Return REPLICA when Emacs shows it as it is seen, to read beside its heading.
-A PDF or a text; nil for anything else, which its own program shows."
-  (and (or (org-moor-text-file-p replica) (org-moor-pdf-p replica)) replica))
+A text, or a PDF Org opens in Emacs (`org-moor-emacs-opens-p'); nil for
+anything else, which its own program shows."
+  (and (or (org-moor-text-file-p replica)
+           (and (org-moor-pdf-p replica) (org-moor-emacs-opens-p replica)))
+       replica))
 
 (defun org-moor-open-to-read (file then)
   "Show FILE, from `org-moor-file-to-read', and call THEN in its buffer."

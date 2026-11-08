@@ -587,8 +587,9 @@ it, links to.  The replica, as Emacs can read it, opens on the left in
 to be written in.  `i' notes the place there, as `org-moor-insert-place';
 `q' writes the heading back and puts the windows back, as C-c C-c in it
 does.  A PDF is shown by pdf-tools when it is there, else by DocView.
-Only a PDF and a text are read so, as they are seen; any other replica
--- a page, a document -- is opened in its own program, as
+Only a text, and a PDF Org opens in Emacs (`org-moor-emacs-opens-p'), are
+read so, as they are seen; any other replica -- a page, a document, a PDF
+Org opens outside -- is opened in its own program, as
 `org-moor-open-replica' opens it, to be quoted by
 `org-moor-insert-quote'."
   (interactive)
