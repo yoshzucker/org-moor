@@ -49,9 +49,9 @@
 
   The URL is handed to emacsclientw directly: $env:EMACSCLIENT, else the
   one on PATH.  A Scoop shim on PATH is followed to the program it stands
-  for, since a shim is a console program and would show a window.  Only
-  when there is no emacsclientw is the org-protocol URL opened through
-  Windows, which then needs the scheme registered.
+  for, since a shim is a console program and would show a window.  It is
+  never opened through Windows, so the scheme needs no registering, and
+  without an emacsclientw nothing is sent.
 
 .PARAMETER Hwnd
   Window to read.  Without it, the window holding the keyboard focus.
@@ -384,8 +384,5 @@ function Resolve-EmacsClient {
 }
 
 $client = Resolve-EmacsClient
-if ($client) {
-  Start-Process -FilePath $client -ArgumentList @('-n', ('"' + $protocolUrl + '"')) -WindowStyle Hidden
-} else {
-  Start-Process $protocolUrl
-}
+if (-not $client) { exit 1 }
+Start-Process -FilePath $client -ArgumentList @('-n', ('"' + $protocolUrl + '"')) -WindowStyle Hidden

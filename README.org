@@ -77,8 +77,10 @@ What you want to take is usually in front of you outside Emacs.
 ~script/org-moor-front.macos~ and ~script/org-moor-front.ps1~ take the
 document in front -- a file open in an app, a file selected in the file
 manager, a page in a browser -- once, from a global hotkey, and exit.
-Each asks the app what it has open and sends it through org-protocol.
-What arrives goes where Emacs was left: at point when the buffer in front
+Each asks the app what it has open and hands it to ~emacsclient~ as an
+~org-protocol://moor~ URL, never through the system, so nothing has to
+be registered for them -- only org-protocol loaded in Emacs when the URL
+arrives.  What arrives goes where Emacs was left: at point when the buffer in front
 is Org, as if taken there; otherwise a heading is asked for.
 On Windows, a PowerPoint, Word or Excel document opened from the web is
 saved by the app itself, and the file is taken with its URL as the
